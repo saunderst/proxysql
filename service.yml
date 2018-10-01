@@ -1,0 +1,11 @@
+org_line: Production Engineering
+owners:
+- Shopify/datastores
+slack_channels:
+- datastores
+audience: internal
+create_issues: true
+classification: library
+security:
+  data_management:
+    contains_pii: false
