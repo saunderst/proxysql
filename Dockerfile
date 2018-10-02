@@ -7,7 +7,7 @@ RUN make
 RUN make -C tools
 
 FROM ubuntu:16.04
-RUN apt-get update && apt-get install -y libssl1.0.0
+RUN apt-get update && apt-get install -y libssl1.0.0 mysql-client
 RUN apt-get clean && rm -rf /var/lib/apt/lists/
 RUN mkdir -p /var/lib/proxysql
 COPY --from=0 /tmp/proxysql/src/proxysql /usr/bin/proxysql
