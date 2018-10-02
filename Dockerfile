@@ -1,4 +1,4 @@
-FROM ubuntu:16.04
+FROM debian:jessie
 RUN apt-get update && apt-get install -y automake cmake make g++ gcc \
   git libmysqlclient-dev libssl-dev bzip2 libtool
 COPY proxysql /tmp/proxysql
@@ -6,7 +6,7 @@ WORKDIR /tmp/proxysql
 RUN make
 RUN make -C tools
 
-FROM ubuntu:16.04
+FROM debian:jessie
 RUN apt-get update && apt-get install -y libssl1.0.0 mysql-client
 RUN apt-get clean && rm -rf /var/lib/apt/lists/
 RUN mkdir -p /var/lib/proxysql
