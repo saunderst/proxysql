@@ -1,3 +1,12 @@
+@@ -1709,7 +1709,7 @@
+     /* set hints for getaddrinfo */
+     bzero(&hints, sizeof(hints));
+     hints.ai_protocol= IPPROTO_TCP; /* TCP connections only */
+-    hints.ai_family= AF_UNSPEC;     /* includes: IPv4, IPv6 or hostname */
++    hints.ai_family= AF_INET;       /* includes: IPv4 or hostname */
+     hints.ai_socktype= SOCK_STREAM;
+
+     /* if client has multiple interfaces, we will bind socket to given
 @@ -2039,10 +2039,16 @@
  
    mysql->client_flag= client_flag;
