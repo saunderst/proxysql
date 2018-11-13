@@ -25,7 +25,6 @@ mysql_variables=
   query_retries_on_failure=0
   shun_on_failures=999999
   shun_recovery_time_sec=0
-  kill_backend_connection_when_disconnect=false
   throttle_connections_per_sec_to_hostgroup=20
   stats_time_backend_query=false
   stats_time_query_processor=false
