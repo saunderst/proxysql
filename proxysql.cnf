@@ -31,6 +31,7 @@ mysql_variables=
   max_stmts_per_connection=5
   default_max_latency_ms=999999
   wait_timeout=1800000
+  restart_on_missing_heartbeats=false
 }
 
 # defines all the MySQL users
