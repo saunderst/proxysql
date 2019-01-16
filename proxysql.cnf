@@ -73,6 +73,15 @@ mysql_users:
     max_connections=50000
     active = 1
     transaction_persistent=1
+  },
+  {
+    username = "shopify_storefront_ro"
+    password = "$SHOPIFY_STOREFRONT_RO_PASSWORD"
+    default_hostgroup = 1
+    default_schema = "$SCHEMA"
+    max_connections=50000
+    active = 1
+    transaction_persistent=1
   }
 )
 
