@@ -20,8 +20,6 @@
 #define MYSQL_DEFAULT_SQL_MODE	""
 #define MYSQL_DEFAULT_TIME_ZONE	"SYSTEM"
 
-#define PROXYSQL_MYSQL_PTHREAD_MUTEX
-
 static unsigned int near_pow_2 (unsigned int n) {
   unsigned int i = 1;
   while (i < n) i <<= 1;
@@ -36,6 +34,17 @@ typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) _conn_exchange_t {
 	PtrArray *resume_mysql_sessions;
 } conn_exchange_t;
 #endif // IDLE_THREADS
+
+typedef struct _thr_id_username_t {
+	uint32_t id;
+	char *username;
+} thr_id_usr;
+
+typedef struct _kill_queue_t {
+	pthread_mutex_t m;
+	std::vector<thr_id_usr *> conn_ids;
+	std::vector<thr_id_usr *> query_ids;
+} kill_queue_t;
 
 class ProxySQL_Poll {
 
@@ -200,6 +209,7 @@ class MySQL_Thread
 
 	int pipefd[2];
 	int shutdown;
+	kill_queue_t kq;
 
 	bool epoll_thread;
 	bool poll_timeout_bool;
@@ -236,11 +246,7 @@ class MySQL_Thread
 		bool stats_time_query_processor;
 	} variables;
 
-#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
   pthread_mutex_t thread_mutex;
-#else
-  rwlock_t thread_mutex;
-#endif
   MySQL_Thread();
   ~MySQL_Thread();
   MySQL_Session * create_new_session_and_client_data_stream(int _fd);
@@ -261,6 +267,8 @@ class MySQL_Thread
 	MySQL_Connection * get_MyConn_local(unsigned int _hid, MySQL_Session *sess);
 	void push_MyConn_local(MySQL_Connection *);
 	void return_local_connections();
+	void Scan_Sessions_to_Kill(PtrArray *mysess);
+	void Scan_Sessions_to_Kill_All();
 };
 
 
@@ -306,11 +314,7 @@ class MySQL_Threads_Handler
 	int shutdown_;
 	size_t stacksize;
 	pthread_attr_t attr;
-#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_rwlock_t rwlock;
-#else
-	rwlock_t rwlock;
-#endif
 	PtrArray *bind_fds;
 	MySQL_Listeners_Manager *MLM;
 	public:
@@ -393,6 +397,7 @@ class MySQL_Threads_Handler
 		int default_query_timeout;
 		int query_processor_iterations;
 		int query_processor_regex;
+		int auto_increment_delay_multiplex;
 		int long_query_time;
 		int hostgroup_manager_verbose;
 		char *init_connect;
@@ -484,6 +489,7 @@ class MySQL_Threads_Handler
 		return MLM->find_iface_from_fd(fd);
 	}
 	void Get_Memory_Stats();
+	void kill_connection_or_query(uint32_t _thread_session_id, bool query, char *username);
 };
 
 
