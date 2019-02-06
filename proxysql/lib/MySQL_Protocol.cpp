@@ -193,6 +193,12 @@ unsigned int CPY3(unsigned char *ptr) {
 	return buf.i;
 }
 
+uint64_t CPY8(unsigned char *ptr) {
+	uint64_t buf;
+	memcpy(&buf,ptr,sizeof(uint64_t));
+	return buf;
+}
+
 // see http://dev.mysql.com/doc/internals/en/integer.html#packet-Protocol::LengthEncodedInteger
 /* arguments to pass:
  * pointer to the field
@@ -1232,9 +1238,8 @@ bool MySQL_Protocol::process_pkt_auth_swich_response(unsigned char *pkt, unsigne
 
 
 bool MySQL_Protocol::process_pkt_COM_CHANGE_USER(unsigned char *pkt, unsigned int len) {
-	// FIXME: very buggy function, it doesn't perform any real check
 	bool ret=false;
-  int cur=sizeof(mysql_hdr);
+	int cur=sizeof(mysql_hdr);
 	unsigned char *user=NULL;
 	char *password=NULL;
 	char *db=NULL;
@@ -1321,7 +1326,7 @@ bool MySQL_Protocol::process_pkt_COM_CHANGE_USER(unsigned char *pkt, unsigned in
 		free(sha1_pass);
 		sha1_pass=NULL;
 	}
-
+	userinfo->set(NULL,NULL,NULL,NULL); // just to call compute_hash()
 	return ret;
 }
 
@@ -1334,12 +1339,12 @@ bool MySQL_Protocol::process_pkt_handshake_response(unsigned char *pkt, unsigned
 	unsigned char *user=NULL;
 	char *db=NULL;
 	char *db_tmp = NULL;
-	unsigned char pass[128];
+	unsigned char *pass = NULL;
+	MySQL_Connection *myconn = NULL;
 	char *password=NULL;
 	bool use_ssl=false;
 	bool _ret_use_ssl=false;
 
-	memset(pass,0,128);
 	void *sha1_pass=NULL;
 //#ifdef DEBUG
 	unsigned char *_ptr=pkt;
@@ -1366,6 +1371,11 @@ bool MySQL_Protocol::process_pkt_handshake_response(unsigned char *pkt, unsigned
 	pkt     += strlen((char *)user) + 1;
 
 	pass_len = (capabilities & CLIENT_SECURE_CONNECTION ? *pkt++ : strlen((char *)pkt));
+	if (pass_len > (len - (pkt - _ptr))) {
+		ret = false;
+		goto __exit_process_pkt_handshake_response;
+	}
+	pass = (unsigned char *)malloc(pass_len+1);
 	memcpy(pass, pkt, pass_len);
 	pass[pass_len] = 0;
 
@@ -1460,7 +1470,7 @@ bool MySQL_Protocol::process_pkt_handshake_response(unsigned char *pkt, unsigned
             (capabilities & CLIENT_SECURE_CONNECTION ? "new" : "old"), user, password, pass, db, max_pkt, capabilities, charset, ((*myds)->encrypted ? "yes" : "no"));
 	assert(sess);
 	assert(sess->client_myds);
-	MySQL_Connection *myconn=sess->client_myds->myconn;
+	myconn=sess->client_myds->myconn;
 	assert(myconn);
 	myconn->set_charset(charset);
 	// enable compression
@@ -1494,6 +1504,7 @@ bool MySQL_Protocol::process_pkt_handshake_response(unsigned char *pkt, unsigned
 	}
 
 __exit_process_pkt_handshake_response:
+	free(pass);
 	if (password) {
 		free(password);
 		password=NULL;
@@ -1966,7 +1977,11 @@ void MySQL_ResultSet::add_err(MySQL_Data_Stream *_myds) {
 		char sqlstate[10];
 		sprintf(sqlstate,"%s",mysql_sqlstate(_mysql));
 		if (_myds && _myds->killed_at) { // see case #750
+			if (_myds->kill_type == 0) {
 			myprot->generate_pkt_ERR(false,&pkt.ptr,&pkt.size,sid,1907,sqlstate,(char *)"Query execution was interrupted, query_timeout exceeded");
+		} else {
+				myprot->generate_pkt_ERR(false,&pkt.ptr,&pkt.size,sid,1317,sqlstate,(char *)"Query execution was interrupted");
+			}
 		} else {
 			myprot->generate_pkt_ERR(false,&pkt.ptr,&pkt.size,sid,mysql_errno(_mysql),sqlstate,mysql_error(_mysql));
 		}
