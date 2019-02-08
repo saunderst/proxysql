@@ -3903,7 +3903,7 @@ void MySQL_Threads_Handler::Get_Memory_Stats() {
 }
 
 SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
-	const int colnum=14;
+	const int colnum=15;
         char port[NI_MAXSERV];
 	proxy_debug(PROXY_DEBUG_MYSQL_CONNECTION, 4, "Dumping MySQL Processlist\n");
 	SQLite3_result *result=new SQLite3_result(colnum);
@@ -3921,6 +3921,7 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 	result->add_column_definition(SQLITE_TEXT,"command");
 	result->add_column_definition(SQLITE_TEXT,"time_ms");
 	result->add_column_definition(SQLITE_TEXT,"info");
+	result->add_column_definition(SQLITE_TEXT,"status_flags");
 	unsigned int i;
 	unsigned int i2;
 	signal_all_threads(1);
@@ -3997,6 +3998,8 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 				}
 				sprintf(buf,"%d", sess->current_hostgroup);
 				pta[6]=strdup(buf);
+				sprintf(buf,"%d", sess->client_myds->myconn->status_flags);
+				pta[14]=strdup(buf);
 				if (sess->mybe && sess->mybe->server_myds && sess->mybe->server_myds->myconn) {
 					MySQL_Connection *mc=sess->mybe->server_myds->myconn;
 
