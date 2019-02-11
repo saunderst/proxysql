@@ -3998,8 +3998,6 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 				}
 				sprintf(buf,"%d", sess->current_hostgroup);
 				pta[6]=strdup(buf);
-				sprintf(buf,"%d", sess->client_myds->myconn->status_flags);
-				pta[14]=strdup(buf);
 				if (sess->mybe && sess->mybe->server_myds && sess->mybe->server_myds->myconn) {
 					MySQL_Connection *mc=sess->mybe->server_myds->myconn;
 
@@ -4059,12 +4057,15 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 							pta[13]=NULL;
 						}
 					}
+				sprintf(buf,"%d", mc->status_flags);
+				pta[14]=strdup(buf);
 				} else {
 					pta[7]=NULL;
 					pta[8]=NULL;
 					pta[9]=NULL;
 					pta[10]=NULL;
 					pta[13]=NULL;
+					pta[14]=NULL;
 				}
 				switch (sess->status) {
 					case CONNECTING_SERVER:
