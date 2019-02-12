@@ -277,7 +277,6 @@ static char * mysql_thread_variables_names[]= {
 	(char *)"default_query_timeout",
 	(char *)"query_processor_iterations",
 	(char *)"query_processor_regex",
-	(char *)"auto_increment_delay_multiplex",
 	(char *)"long_query_time",
 	(char *)"query_cache_size_MB",
 	(char *)"ping_interval_server_msec",
@@ -331,7 +330,11 @@ MySQL_Threads_Handler::MySQL_Threads_Handler() {
 #endif // IDLE_THREADS
 	stacksize=0;
 	shutdown_=0;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_rwlock_init(&rwlock,NULL);
+#else
+	spinlock_rwlock_init(&rwlock);
+#endif
 	pthread_attr_init(&attr);
 	variables.shun_on_failures=5;
 	variables.shun_recovery_time_sec=10;
@@ -348,7 +351,7 @@ MySQL_Threads_Handler::MySQL_Threads_Handler() {
 	variables.monitor_history=600000;
 	variables.monitor_connect_interval=120000;
 	variables.monitor_connect_timeout=600;
-	variables.monitor_ping_interval=8000;
+	variables.monitor_ping_interval=60000;
 	variables.monitor_ping_max_failures=3;
 	variables.monitor_ping_timeout=1000;
 	variables.monitor_read_only_interval=1000;
@@ -387,7 +390,6 @@ MySQL_Threads_Handler::MySQL_Threads_Handler() {
 	variables.default_query_timeout=24*3600*1000;
 	variables.query_processor_iterations=0;
 	variables.query_processor_regex=1;
-	variables.auto_increment_delay_multiplex=5;
 	variables.long_query_time=1000;
 	variables.query_cache_size_MB=256;
 	variables.init_connect=NULL;
@@ -499,11 +501,19 @@ int MySQL_Threads_Handler::listener_del(const char *iface) {
 }
 
 void MySQL_Threads_Handler::wrlock() {
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_rwlock_wrlock(&rwlock);
+#else
+	spin_wrlock(&rwlock);
+#endif
 }
 
 void MySQL_Threads_Handler::wrunlock() {
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_rwlock_unlock(&rwlock);
+#else
+	spin_wrunlock(&rwlock);
+#endif
 }
 
 void MySQL_Threads_Handler::commit() {
@@ -641,7 +651,6 @@ int MySQL_Threads_Handler::get_variable_int(char *name) {
 	if (!strcasecmp(name,"default_query_timeout")) return (int)variables.default_query_timeout;
 	if (!strcasecmp(name,"query_processor_iterations")) return (int)variables.query_processor_iterations;
 	if (!strcasecmp(name,"query_processor_regex")) return (int)variables.query_processor_regex;
-	if (!strcasecmp(name,"auto_increment_delay_multiplex")) return (int)variables.auto_increment_delay_multiplex;
 	if (!strcasecmp(name,"default_max_latency_ms")) return (int)variables.default_max_latency_ms;
 	if (!strcasecmp(name,"long_query_time")) return (int)variables.long_query_time;
 	if (!strcasecmp(name,"query_cache_size_MB")) return (int)variables.query_cache_size_MB;
@@ -965,10 +974,6 @@ char * MySQL_Threads_Handler::get_variable(char *name) {	// this is the public f
 	}
 	if (!strcasecmp(name,"query_processor_regex")) {
 		sprintf(intbuf,"%d",variables.query_processor_regex);
-		return strdup(intbuf);
-	}
-	if (!strcasecmp(name,"auto_increment_delay_multiplex")) {
-		sprintf(intbuf,"%d",variables.auto_increment_delay_multiplex);
 		return strdup(intbuf);
 	}
 	if (!strcasecmp(name,"default_max_latency_ms")) {
@@ -1498,15 +1503,6 @@ bool MySQL_Threads_Handler::set_variable(char *name, char *value) {	// this is t
 		int intv=atoi(value);
 		if (intv >= 1 && intv <= 2) {
 			variables.query_processor_regex=intv;
-			return true;
-		} else {
-			return false;
-		}
-	}
-	if (!strcasecmp(name,"auto_increment_delay_multiplex")) {
-		int intv=atoi(value);
-		if (intv >= 0 && intv <= 1000000) {
-			variables.auto_increment_delay_multiplex=intv;
 			return true;
 		} else {
 			return false;
@@ -2127,16 +2123,10 @@ void MySQL_Threads_Handler::init(unsigned int num, size_t stack) {
 
 proxysql_mysql_thread_t * MySQL_Threads_Handler::create_thread(unsigned int tn, void *(*start_routine) (void *), bool idles) {
 	if (idles==false) {
-		if (pthread_create(&mysql_threads[tn].thread_id, &attr, start_routine , &mysql_threads[tn]) != 0 ) {
-			proxy_error("Thread creation\n");
-			assert(0);
-		}
+		pthread_create(&mysql_threads[tn].thread_id, &attr, start_routine , &mysql_threads[tn]);
 #ifdef IDLE_THREADS
 	} else {
-		if (pthread_create(&mysql_threads_idles[tn].thread_id, &attr, start_routine , &mysql_threads_idles[tn]) != 0) {
-			proxy_error("Thread creation\n");
-			assert(0);
-		}
+		pthread_create(&mysql_threads_idles[tn].thread_id, &attr, start_routine , &mysql_threads_idles[tn]);
 #endif // IDLE_THREADS
 	}
 	return NULL;
@@ -2402,7 +2392,6 @@ bool MySQL_Thread::init() {
 	assert(idle_mysql_sessions);
 	assert(resume_mysql_sessions);
 #endif // IDLE_THREADS
-	pthread_mutex_init(&kq.m,NULL);
 
 	shutdown=0;
 	my_idle_conns=(MySQL_Connection **)malloc(sizeof(MySQL_Connection *)*SESSIONS_FOR_CONNECTIONS_HANDLER);
@@ -2490,7 +2479,11 @@ void MySQL_Thread::run() {
 	curtime=monotonic_time();
 	atomic_curtime=curtime;
 
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_mutex_lock(&thread_mutex);
+#else
+	spin_wrlock(&thread_mutex);
+#endif
 	while (shutdown==0) {
 
 #ifdef IDLE_THREADS
@@ -2743,7 +2736,11 @@ __mysql_thread_exit_add_mirror:
 __run_skip_1a:
 #endif // IDLE_THREADS
 
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_unlock(&thread_mutex);
+#else
+		spin_wrunlock(&thread_mutex);
+#endif
 		while ((n=__sync_add_and_fetch(&mypolls.pending_listener_add,0))) {	// spin here
 			poll_listener_add(n);
 			assert(__sync_bool_compare_and_swap(&mypolls.pending_listener_add,n,0));
@@ -2782,7 +2779,11 @@ __run_skip_1a:
 			assert(__sync_bool_compare_and_swap(&mypolls.pending_listener_del,n,0));
 		}
 
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_lock(&thread_mutex);
+#else
+		spin_wrlock(&thread_mutex);
+#endif
 		mypolls.poll_timeout=0; // always reset this to 0 . If a session needs a specific timeout, it will set this one
 
 		curtime=monotonic_time();
@@ -2809,13 +2810,6 @@ __run_skip_1a:
 		} else {
 			maintenance_loop=false;
 		}
-
-		pthread_mutex_lock(&kq.m);
-		if (kq.conn_ids.size() + kq.query_ids.size()) {
-			Scan_Sessions_to_Kill_All();
-			maintenance_loop=true;
-		}
-		pthread_mutex_unlock(&kq.m);
 
 		// update polls statistics
 		mypolls.loops++;
@@ -2954,9 +2948,17 @@ __run_skip_1a:
 					//fprintf(stderr,"Got signal from admin , done nothing\n"); // FIXME: this is just the scheleton for issue #253
 					if (c) {
 						// we are being signaled to sleep for some ms. Before going to sleep we also release the mutex
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 						pthread_mutex_unlock(&thread_mutex);
+#else
+						spin_wrunlock(&thread_mutex);
+#endif
 						usleep(c*1000);
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 						pthread_mutex_lock(&thread_mutex);
+#else
+						spin_wrlock(&thread_mutex);
+#endif
 						// we enter in maintenance loop only if c is set
 						// when threads are signaling each other, there is no need to set maintenance_loop
 						maintenance_loop=true;
@@ -3317,7 +3319,6 @@ void MySQL_Thread::refresh_variables() {
 	mysql_thread___default_query_timeout=GloMTH->get_variable_int((char *)"default_query_timeout");
 	mysql_thread___query_processor_iterations=GloMTH->get_variable_int((char *)"query_processor_iterations");
 	mysql_thread___query_processor_regex=GloMTH->get_variable_int((char *)"query_processor_regex");
-	mysql_thread___auto_increment_delay_multiplex=GloMTH->get_variable_int((char *)"auto_increment_delay_multiplex");
 	mysql_thread___default_max_latency_ms=GloMTH->get_variable_int((char *)"default_max_latency_ms");
 	mysql_thread___long_query_time=GloMTH->get_variable_int((char *)"long_query_time");
 	mysql_thread___query_cache_size_MB=GloMTH->get_variable_int((char *)"query_cache_size_MB");
@@ -3421,7 +3422,11 @@ void MySQL_Thread::refresh_variables() {
 }
 
 MySQL_Thread::MySQL_Thread() {
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_mutex_init(&thread_mutex,NULL);
+#else
+	spinlock_rwlock_init(&thread_mutex);
+#endif
 	my_idle_conns=NULL;
 	cached_connections=NULL;
 	mysql_sessions=NULL;
@@ -3896,9 +3901,39 @@ void MySQL_Threads_Handler::Get_Memory_Stats() {
 			}
 #endif /* IDLE_THREADS */
 		}
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_lock(&thr->thread_mutex);
+#else
+		spin_wrlock(&thr->thread_mutex);
+#endif
+	}
+	for (i=0;i<j;i++) {
+		if (i<num_threads) {
+			thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef IDLE_THREADS
+		} else {
+			if (GloVars.global.idle_threads) {
+				thr=(MySQL_Thread *)mysql_threads_idles[i-num_threads].worker;
+			}
+#endif /* IDLE_THREADS */
+		}
 		thr->Get_Memory_Stats();
+	}
+	for (i=0;i<j;i++) {
+		if (i<num_threads) {
+			thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef IDLE_THREADS
+		} else {
+			if (GloVars.global.idle_threads) {
+				thr=(MySQL_Thread *)mysql_threads_idles[i-num_threads].worker;
+			}
+#endif /* IDLE_THREADS */
+		}
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_unlock(&thr->thread_mutex);
+#else
+		spin_wrunlock(&thr->thread_mutex);
+#endif
 	}
 }
 
@@ -3906,7 +3941,7 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 	const int colnum=15;
         char port[NI_MAXSERV];
 	proxy_debug(PROXY_DEBUG_MYSQL_CONNECTION, 4, "Dumping MySQL Processlist\n");
-	SQLite3_result *result=new SQLite3_result(colnum);
+  SQLite3_result *result=new SQLite3_result(colnum);
 	result->add_column_definition(SQLITE_TEXT,"ThreadID");
 	result->add_column_definition(SQLITE_TEXT,"SessionID");
 	result->add_column_definition(SQLITE_TEXT,"user");
@@ -3936,13 +3971,34 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 	for (i=0;i<i2;i++) {
 		if (i<num_threads) {
 			thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 			pthread_mutex_lock(&thr->thread_mutex);
+#else
+			spin_wrlock(&thr->thread_mutex);
+#endif
 #ifdef IDLE_THREADS
 		} else {
 			if (mysql_thread___session_idle_show_processlist) {
 				thr=(MySQL_Thread *)mysql_threads_idles[i-num_threads].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 				pthread_mutex_lock(&thr->thread_mutex);
+#else
+				spin_wrlock(&thr->thread_mutex);
+#endif
 			}
+#endif // IDLE_THREADS
+		}
+	}
+#ifdef IDLE_THREADS
+	for (i=0;i < ( (mysql_thread___session_idle_show_processlist && GloVars.global.idle_threads ) ? num_threads*2 : num_threads); i++) {
+#else
+	for (i=0;i < num_threads; i++) {
+#endif // IDLE_THREADS
+		if (i<num_threads) {
+			thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef IDLE_THREADS
+		} else {
+			thr=(MySQL_Thread *)mysql_threads_idles[i-num_threads].worker;
 #endif // IDLE_THREADS
 		}
 		unsigned int j;
@@ -4158,7 +4214,31 @@ SQLite3_result * MySQL_Threads_Handler::SQL3_Processlist() {
 				free(pta);
 			}
 		}
-		pthread_mutex_unlock(&thr->thread_mutex);
+	}
+#ifdef IDLE_THREADS
+	for (i=0;i < ( (mysql_thread___session_idle_show_processlist && GloVars.global.idle_threads ) ? num_threads*2 : num_threads); i++) {
+#else
+	for (i=0;i < num_threads; i++) {
+#endif // IDLE_THREADS
+		if (i<num_threads) {
+			thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
+			pthread_mutex_unlock(&thr->thread_mutex);
+#else
+			spin_wrunlock(&thr->thread_mutex);
+#endif
+#ifdef IDLE_THREADS
+		} else {
+			if (mysql_thread___session_idle_show_processlist) {
+				thr=(MySQL_Thread *)mysql_threads_idles[i-num_threads].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
+				pthread_mutex_unlock(&thr->thread_mutex);
+#else
+				spin_wrunlock(&thr->thread_mutex);
+#endif
+			}
+#endif // IDLE_THREADS
+		}
 	}
 	return result;
 }
@@ -4186,54 +4266,27 @@ void MySQL_Threads_Handler::signal_all_threads(unsigned char _c) {
 #endif // IDLE_THREADS
 }
 
-void MySQL_Threads_Handler::kill_connection_or_query(uint32_t _thread_session_id, bool query, char *username) {
-	unsigned int i;
-	for (i=0;i<num_threads;i++) {
-		MySQL_Thread *thr=(MySQL_Thread *)mysql_threads[i].worker;
-		thr_id_usr *tu = (thr_id_usr *)malloc(sizeof(thr_id_usr));
-		tu->id = _thread_session_id;
-		tu->username = strdup(username);
-		pthread_mutex_lock(&thr->kq.m);
-		if (query) {
-			thr->kq.query_ids.push_back(tu);
-		} else {
-			thr->kq.conn_ids.push_back(tu);
-		}
-		pthread_mutex_unlock(&thr->kq.m);
- 	}
-#ifdef IDLE_THREADS
-	if (GloVars.global.idle_threads) {
-		for (i=0;i<num_threads;i++) {
-			MySQL_Thread *thr=(MySQL_Thread *)mysql_threads_idles[i].worker;
-			thr_id_usr *tu = (thr_id_usr *)malloc(sizeof(thr_id_usr));
-			tu->id = _thread_session_id;
-			tu->username = strdup(username);
-			pthread_mutex_lock(&thr->kq.m);
-			if (query) {
-				thr->kq.query_ids.push_back(tu);
-			} else {
-				thr->kq.conn_ids.push_back(tu);
-			}
-			pthread_mutex_unlock(&thr->kq.m);
-		}
-	}
-#endif
-	signal_all_threads(0);
-}
-
 bool MySQL_Threads_Handler::kill_session(uint32_t _thread_session_id) {
 	bool ret=false;
 	unsigned int i;
 	signal_all_threads(1);
 	for (i=0;i<num_threads;i++) {
 		MySQL_Thread *thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_lock(&thr->thread_mutex);
+#else
+		spin_wrlock(&thr->thread_mutex);
+#endif
 	}
 #ifdef IDLE_THREADS
 	if (GloVars.global.idle_threads)
 	for (i=0;i<num_threads;i++) {
 		MySQL_Thread *thr=(MySQL_Thread *)mysql_threads_idles[i].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_lock(&thr->thread_mutex);
+#else
+		spin_wrlock(&thr->thread_mutex);
+#endif
 	}
 #endif // IDLE_THREADS
 	for (i=0;i<num_threads;i++) {
@@ -4266,13 +4319,21 @@ bool MySQL_Threads_Handler::kill_session(uint32_t _thread_session_id) {
 __exit_kill_session:
 	for (i=0;i<num_threads;i++) {
 		MySQL_Thread *thr=(MySQL_Thread *)mysql_threads[i].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_unlock(&thr->thread_mutex);
+#else
+		spin_wrunlock(&thr->thread_mutex);
+#endif
 	}
 #ifdef IDLE_THREADS
 	if (GloVars.global.idle_threads)
 	for (i=0;i<num_threads;i++) {
 		MySQL_Thread *thr=(MySQL_Thread *)mysql_threads_idles[i].worker;
+#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 		pthread_mutex_unlock(&thr->thread_mutex);
+#else
+		spin_wrunlock(&thr->thread_mutex);
+#endif
 	}
 #endif // IDLE_THREADS
 	return ret;
@@ -4684,83 +4745,4 @@ unsigned long long MySQL_Threads_Handler::get_ConnPool_get_conn_failure() {
 		}
 	}
 	return q;
-}
-
-void MySQL_Thread::Scan_Sessions_to_Kill_All() {
-	if (kq.conn_ids.size() + kq.query_ids.size()) {
-		Scan_Sessions_to_Kill(mysql_sessions);
-	}
-#ifdef IDLE_THREADS
-	if (GloVars.global.idle_threads) {
-		if (kq.conn_ids.size() + kq.query_ids.size()) {
-			Scan_Sessions_to_Kill(idle_mysql_sessions);
-		}
-		if (kq.conn_ids.size() + kq.query_ids.size()) {
-			Scan_Sessions_to_Kill(resume_mysql_sessions);
-		}
-		if (kq.conn_ids.size() + kq.query_ids.size()) {
-			pthread_mutex_lock(&myexchange.mutex_idles);
-			Scan_Sessions_to_Kill(myexchange.idle_mysql_sessions);
-			pthread_mutex_unlock(&myexchange.mutex_idles);
-		}
-		if (kq.conn_ids.size() + kq.query_ids.size()) {
-			pthread_mutex_lock(&myexchange.mutex_resumes);
-			Scan_Sessions_to_Kill(myexchange.resume_mysql_sessions);
-			pthread_mutex_unlock(&myexchange.mutex_resumes);
-		}
-	}
-#endif
-	for (std::vector<thr_id_usr *>::iterator it=kq.conn_ids.begin(); it!=kq.conn_ids.end(); ++it) {
-		thr_id_usr *t = *it;
-		free(t->username);
-		free(t);
-	}
-	for (std::vector<thr_id_usr *>::iterator it=kq.query_ids.begin(); it!=kq.query_ids.end(); ++it) {
-		thr_id_usr *t = *it;
-		free(t->username);
-		free(t);
-	}
-	kq.conn_ids.clear();
-	kq.query_ids.clear();
-}
-
-void MySQL_Thread::Scan_Sessions_to_Kill(PtrArray *mysess) {
-	for (unsigned int n=0; n<mysess->len && ( kq.conn_ids.size() + kq.query_ids.size() ) ; n++) {
-		MySQL_Session *_sess=(MySQL_Session *)mysess->index(n);
-		bool cont=true;
-		for (std::vector<thr_id_usr *>::iterator it=kq.conn_ids.begin(); cont && it!=kq.conn_ids.end(); ++it) {
-			thr_id_usr *t = *it;
-			if (t->id == _sess->thread_session_id) {
-				if (_sess->client_myds) {
-				       if (strcmp(t->username,_sess->client_myds->myconn->userinfo->username)==0) {
-						_sess->killed=true;
-					}
-				}
-				cont=false;
-				free(t->username);
-				free(t);
-				kq.conn_ids.erase(it);
-			}
-		}
-		for (std::vector<thr_id_usr *>::iterator it=kq.query_ids.begin(); cont && it!=kq.query_ids.end(); ++it) {
-			thr_id_usr *t = *it;
-			if (t->id == _sess->thread_session_id) {
-				proxy_info("Killing query %d\n", t->id);
-				if (_sess->client_myds) {
-				       if (strcmp(t->username,_sess->client_myds->myconn->userinfo->username)==0) {
-						if (_sess->mybe) {
-							if (_sess->mybe->server_myds) {
-								_sess->mybe->server_myds->wait_until=curtime;
-								_sess->mybe->server_myds->kill_type=1;
-							}
-						}
-					}
-				}
-				cont=false;
-				free(t->username);
-				free(t);
-				kq.query_ids.erase(it);
-			}
-		}
-	}
 }

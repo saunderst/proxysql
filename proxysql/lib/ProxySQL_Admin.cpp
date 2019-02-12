@@ -724,10 +724,8 @@ bool is_valid_global_variable(const char *var_name) {
 bool admin_handler_command_set(char *query_no_space, unsigned int query_no_space_length, MySQL_Session *sess, ProxySQL_Admin *pa, char **q, unsigned int *ql) {
 	if (!strstr(query_no_space,(char *)"password")) { // issue #599
 		proxy_debug(PROXY_DEBUG_ADMIN, 4, "Received command %s\n", query_no_space);
-		if (strncasecmp(query_no_space,(char *)"set autocommit",strlen((char *)"set autocommit"))) {
-			if (strncasecmp(query_no_space,(char *)"SET @@session.autocommit",strlen((char *)"SET @@session.autocommit"))) {
-				proxy_info("Received command %s\n", query_no_space);
-			}
+		if (strcmp(query_no_space,(char *)"set autocommit=0")) {
+			proxy_info("Received command %s\n", query_no_space);
 		}
 	}
 	// Get a pointer to the beginnig of var=value entry and split to get var name and value
@@ -1844,7 +1842,7 @@ void ProxySQL_Admin::flush_configdb() { // see #923
 	__attach_db(admindb, configdb, (char *)"disk");
 	// Fully synchronous is not required. See to #1055
 	// https://sqlite.org/pragma.html#pragma_synchronous
-	configdb->execute("PRAGMA synchronous=0");
+	configdb->execute("PRAGMA disk.synchronous=0");
 	wrunlock();
 }
 
@@ -2242,12 +2240,10 @@ void admin_session_handler(MySQL_Session *sess, void *_pa, PtrSize_t *pkt) {
 	unsigned int query_no_space_length=remove_spaces(query_no_space);
 	//fprintf(stderr,"%s----\n",query_no_space);
 
-	if (query_no_space_length) {
-		// fix bug #925
-		while (query_no_space[query_no_space_length-1]==';' || query_no_space[query_no_space_length-1]==' ') {
-			query_no_space_length--;
-			query_no_space[query_no_space_length]=0;
-		}
+	// fix bug #925
+	while (query_no_space[query_no_space_length-1]==';' || query_no_space[query_no_space_length-1]==' ') {
+		query_no_space_length--;
+		query_no_space[query_no_space_length]=0;
 	}
 
 	// add global mutex, see bug #1188
@@ -3199,10 +3195,8 @@ static void * admin_main_loop(void *arg)
 				pthread_mutex_lock (&sock_mutex);
 				client=(int *)malloc(sizeof(int));
 				*client= client_t;
-				if ( pthread_create(&child, &attr, child_func[callback_func[i]], client) != 0 ) {
-					proxy_error("Thread creation\n");
-					assert(0);
-				}
+				if ( pthread_create(&child, &attr, child_func[callback_func[i]], client) != 0 )
+					perror("Thread creation");
 			}
 			fds[i].revents=0;
 		}
@@ -3275,11 +3269,7 @@ __end_while_pool:
 					free_mem=true;
 				}
 
-#ifdef SO_REUSEPORT
-				int s = ( atoi(port) ? listen_on_port(add, atoi(port), 128, true) : listen_on_unix(add, 128));
-#else
 				int s = ( atoi(port) ? listen_on_port(add, atoi(port), 128) : listen_on_unix(add, 128));
-#endif
 				if (s>0) { fds[nfds].fd=s; fds[nfds].events=POLLIN; fds[nfds].revents=0; callback_func[nfds]=0; socket_names[nfds]=strdup(sn); nfds++; }
 				if (free_mem) {
 					if (add) free(add);
@@ -7658,17 +7648,14 @@ int ProxySQL_Admin::Read_MySQL_Servers_from_configfile() {
                         int reader_hostgroup;
                         int offline_hostgroup;
                         int active=1; // default
-                        int max_writers;
-                        int writer_is_also_reader;
-                        int max_transactions_behind;
+                        int max_writers=1; // default
+                        int writer_is_also_reader=0;
+                        int max_transactions_behind=0;
                         std::string comment="";
                         if (line.lookupValue("writer_hostgroup", writer_hostgroup)==false) continue;
                         if (line.lookupValue("backup_writer_hostgroup", backup_writer_hostgroup)==false) continue;
                         if (line.lookupValue("reader_hostgroup", reader_hostgroup)==false) continue;
                         if (line.lookupValue("offline_hostgroup", offline_hostgroup)==false) continue;
-			if (line.lookupValue("max_writers", max_writers)==false) max_writers=1;
-                        if (line.lookupValue("writer_is_also_reader", writer_is_also_reader)==false) writer_is_also_reader=0;
-		        if (line.lookupValue("max_transactions_behind", max_transactions_behind)==false) max_transactions_behind=0;
                         line.lookupValue("comment", comment);
                         char *o1=strdup(comment.c_str());
                         char *o=escape_string_single_quotes(o1, false);
