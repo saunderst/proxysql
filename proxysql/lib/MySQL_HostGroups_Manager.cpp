@@ -178,11 +178,9 @@ MySQL_Connection * MySrvConnList::remove(int _k) {
 	return (MySQL_Connection *)conns->remove_index_fast(_k);
 }
 
-/*
 unsigned int MySrvConnList::conns_length() {
 	return conns->len;
 }
-*/
 
 MySrvConnList::MySrvConnList(MySrvC *_mysrvc) {
 	mysrvc=_mysrvc;
@@ -285,16 +283,10 @@ void MySrvC::connect_error(int err_num) {
 			break;
 	}
 	time_t t=time(NULL);
-	if (t > time_last_detected_error) {
+	if (t!=time_last_detected_error) {
 		time_last_detected_error=t;
 		connect_ERR_at_time_last_detected_error=1;
 	} else {
-		if (t < time_last_detected_error) {
-			// time_last_detected_error is in the future
-			// this means that monitor has a ping interval too big and tuned that in the future
-			return;
-		}
-		// same time
 		int max_failures = mysql_thread___shun_on_failures;
 		if (__sync_add_and_fetch(&connect_ERR_at_time_last_detected_error,1) >= (unsigned int)max_failures) {
 			bool _shu=false;
@@ -1318,7 +1310,7 @@ MySrvC *MyHGC::get_random_MySrvC() {
 						if (max_wait_sec < 1) { // min wait time should be at least 1 second
 							max_wait_sec = 1;
 						}
-						if (t > mysrvc->time_last_detected_error && (t - mysrvc->time_last_detected_error) > max_wait_sec) {
+						if ((t - mysrvc->time_last_detected_error) > max_wait_sec) {
 							if (
 								(mysrvc->shunned_and_kill_all_connections==false) // it is safe to bring it back online
 								||
@@ -1346,7 +1338,7 @@ MySrvC *MyHGC::get_random_MySrvC() {
 			// most of the follow code is copied from few lines above
 			time_t t;
 			t=time(NULL);
-			int max_wait_sec = ( mysql_thread___shun_recovery_time_sec * 1000 >= mysql_thread___connect_timeout_server_max ? mysql_thread___connect_timeout_server_max/10000 - 1 : mysql_thread___shun_recovery_time_sec/10 );
+			int max_wait_sec = ( mysql_thread___shun_recovery_time_sec * 1000 >= mysql_thread___connect_timeout_server_max ? mysql_thread___connect_timeout_server_max/100 - 1 : mysql_thread___shun_recovery_time_sec/10 );
 			if (max_wait_sec < 1) { // min wait time should be at least 1 second
 				max_wait_sec = 1;
 			}
@@ -1427,11 +1419,11 @@ MySrvC *MyHGC::get_random_MySrvC() {
 	return NULL; // if we reach here, we couldn't find any target
 }
 
-//unsigned int MySrvList::cnt() {
-//	return servers->len;
-//}
+unsigned int MySrvList::cnt() {
+	return servers->len;
+}
 
-//MySrvC * MySrvList::idx(unsigned int i) { return (MySrvC *)servers->index(i); }
+MySrvC * MySrvList::idx(unsigned int i) { return (MySrvC *)servers->index(i); }
 
 MySQL_Connection * MySrvConnList::get_random_MyConn(MySQL_Session *sess, bool ff) {
 	MySQL_Connection * conn=NULL;
@@ -1555,10 +1547,7 @@ void MySQL_HostGroups_Manager::destroy_MyConn_from_pool(MySQL_Connection *c, boo
 				pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 				pthread_attr_setstacksize (&attr, 256*1024);
 				pthread_t pt;
-				if (pthread_create(&pt, &attr, &kill_query_thread, ka) != 0) {
-					proxy_error("Thread creation\n");
-					assert(0);
-				}
+				pthread_create(&pt, &attr, &kill_query_thread, ka);
 			}
 		}
 	}
@@ -2180,18 +2169,6 @@ bool MySQL_HostGroups_Manager::shun_and_killall(char *hostname, int port) {
 							break;
 						default:
 							break;
-					}
-					// if Monitor is enabled and mysql-monitor_ping_interval is
-					// set too high, ProxySQL will unshun hosts that are not
-					// available. For this reason time_last_detected_error will
-					// be tuned in the future
-					if (mysql_thread___monitor_enabled) {
-						int a = mysql_thread___shun_recovery_time_sec;
-						int b = mysql_thread___monitor_ping_interval;
-						b = b/1000;
-						if (b > a) {
-							t = t + (b - a);
-						}
 					}
 					mysrvc->time_last_detected_error = t;
 				}
