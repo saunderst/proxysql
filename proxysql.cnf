@@ -102,5 +102,11 @@ mysql_query_rules:
     active = 1
     match_digest = "@@SESSION"
     multiplex = 2
+  },
+  {
+    rule_id = 2
+    active = 1
+    match_digest = "@@global\.server_id"
+    multiplex = 2
   }$QUERY_RULES
 )
