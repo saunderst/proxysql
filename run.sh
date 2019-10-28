@@ -13,9 +13,13 @@ else
   export QUERY_RULES=""
 fi
 
-for config in /etc/proxysql.cnf /root/.my.cnf
+for config in /etc/proxysql.cnf /etc/proxysql.cloudsql.cnf /root/.my.cnf
 do
   perl -i -pe 's/\$([A-Z_]+)/$ENV{$1}/g' $config
 done
+
+if [ ! -z "$CLOUDSQL" ]; then
+    mv /etc/proxysql.cloudsql.cnf /etc/proxysql.cnf
+fi
 
 exec proxysql -f --idle-threads

@@ -14,6 +14,7 @@ COPY --from=0 /tmp/proxysql/src/proxysql /usr/bin/proxysql
 COPY --from=0 /tmp/proxysql/tools/eventslog_reader_sample /usr/bin/eventslog_reader_sample
 COPY --from=0 /tmp/proxysql/tools/check_variables.pl /usr/bin/check_variables.pl
 COPY proxysql.cnf /etc/proxysql.cnf
+COPY proxysql.cloudsql.cnf /etc/proxysql.cloudsql.cnf
 COPY my.cnf /root/.my.cnf
 COPY run.sh /run.sh
 CMD /run.sh
