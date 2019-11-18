@@ -108,5 +108,17 @@ mysql_query_rules:
     active = 1
     match_digest = "@@global\.server_id"
     multiplex = 2
+  },
+  {
+    rule_id = 10
+    active = 1
+    match_pattern = "application:storefront-renderer,sfr_replica:0"
+    destination_hostgroup = 10
+  },
+  {
+    rule_id = 11
+    active = 1
+    match_pattern = "application:storefront-renderer,sfr_replica:1"
+    destination_hostgroup = 11
   }$QUERY_RULES
 )
