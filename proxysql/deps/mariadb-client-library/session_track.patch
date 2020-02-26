@@ -161,7 +161,7 @@ index d64f96b..0d14232 100644
    return mysql;
 +error:
 +  if (mysql->free_me)
-+    free(mysql);
++    my_free(mysql);
 +  return 0;
  }
  
