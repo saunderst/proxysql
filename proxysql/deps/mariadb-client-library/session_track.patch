@@ -1,0 +1,411 @@
+diff --git a/include/ma_common.h b/include/ma_common.h
+index fa89056..32b9d24 100644
+--- a/include/ma_common.h
++++ b/include/ma_common.h
+@@ -54,5 +54,14 @@ struct st_mysql_options_extension {
+   int (*verify_local_infile)(void *data, const char *filename);
+ };
+ 
++struct st_mariadb_session_state
++{
++  LIST *list,
++       *current;
++};
++
++struct st_mariadb_extension {
++  struct st_mariadb_session_state session_state[SESSION_TRACK_TYPES];
++};
+ 
+ #endif
+diff --git a/include/my_sys.h b/include/my_sys.h
+index dabaa12..55151c1 100644
+--- a/include/my_sys.h
++++ b/include/my_sys.h
+@@ -597,6 +597,7 @@ gptr alloc_root(MEM_ROOT *mem_root, size_t Size);
+ void free_root(MEM_ROOT *root, myf MyFLAGS);
+ char *strdup_root(MEM_ROOT *root,const char *str);
+ char *memdup_root(MEM_ROOT *root,const char *str, size_t len);
++extern void *ma_multi_malloc(myf MyFlags, ...);
+ void load_defaults(const char *conf_file, const char **groups,
+ 		   int *argc, char ***argv);
+ void free_defaults(char **argv);
+diff --git a/include/mysql.h b/include/mysql.h
+index 0fec111..618306c 100644
+--- a/include/mysql.h
++++ b/include/mysql.h
+@@ -297,7 +297,7 @@ struct st_mysql_options {
+     void          *thd;
+     my_bool       *unbuffered_fetch_owner;
+     char          *info_buffer;
+-    void          *extension;
++    struct st_mariadb_extension *extension;
+ } MYSQL;
+ 
+ typedef struct st_mysql_res {
+@@ -582,6 +582,8 @@ int             STDCALL mysql_read_query_result_start(my_bool *ret,
+                                                       MYSQL *mysql);
+ int             STDCALL mysql_read_query_result_cont(my_bool *ret,
+                                                      MYSQL *mysql, int status);
++int STDCALL mysql_session_track_get_next(MYSQL *mysql, enum enum_session_state_type type, const char **data, size_t *length);
++int STDCALL mysql_session_track_get_first(MYSQL *mysql, enum enum_session_state_type type, const char **data, size_t *length);
+ int STDCALL mysql_stmt_prepare_start(int *ret, MYSQL_STMT *stmt,const char *query, unsigned long length);
+ int STDCALL mysql_stmt_prepare_cont(int *ret, MYSQL_STMT *stmt, int status);
+ int STDCALL mysql_stmt_execute_start(int *ret, MYSQL_STMT *stmt);
+diff --git a/include/mysql_com.h b/include/mysql_com.h
+index 606b3df..f43d6a3 100644
+--- a/include/mysql_com.h
++++ b/include/mysql_com.h
+@@ -150,6 +150,7 @@ enum enum_server_command
+ #define CLIENT_PS_MULTI_RESULTS  (1UL << 18)
+ #define CLIENT_PLUGIN_AUTH       (1UL << 19)
+ #define CLIENT_CONNECT_ATTRS     (1UL << 20)
++#define CLIENT_SESSION_TRACKING  (1UL << 23)
+ #define CLIENT_PROGRESS          (1UL << 29) /* client supports progress indicator */
+ #define CLIENT_SSL_VERIFY_SERVER_CERT (1UL << 30)
+ #define CLIENT_REMEMBER_OPTIONS  (1UL << 31)
+@@ -176,6 +177,7 @@ enum enum_server_command
+ 		                 CLIENT_SSL_VERIFY_SERVER_CERT |\
+                                  CLIENT_REMEMBER_OPTIONS |\
+                                  CLIENT_PLUGIN_AUTH |\
++                                 CLIENT_SESSION_TRACKING |\
+                                  CLIENT_CONNECT_ATTRS)
+ 
+ #define CLIENT_CAPABILITIES	(CLIENT_LONG_PASSWORD |\
+@@ -186,6 +188,7 @@ enum enum_server_command
+                                  CLIENT_PS_MULTI_RESULTS |\
+                                  CLIENT_PROTOCOL_41 |\
+                                  CLIENT_PLUGIN_AUTH |\
++                                 CLIENT_SESSION_TRACKING |\
+                                  CLIENT_CONNECT_ATTRS)
+ 
+ #define CLIENT_DEFAULT_FLAGS ((CLIENT_SUPPORTED_FLAGS & ~CLIENT_COMPRESS)\
+@@ -203,6 +206,7 @@ enum enum_server_command
+ #define SERVER_STATUS_METADATA_CHANGED    1024
+ #define SERVER_QUERY_WAS_SLOW             2048
+ #define SERVER_PS_OUT_PARAMS              4096
++#define SERVER_SESSION_STATE_CHANGED      (1UL << 14)
+ 
+ #define MYSQL_ERRMSG_SIZE	512
+ #define NET_READ_TIMEOUT	30		/* Timeout on read */
+@@ -269,6 +273,22 @@ enum enum_mysql_set_option
+   MYSQL_OPTION_MULTI_STATEMENTS_OFF
+ };
+ 
++enum enum_session_state_type
++{
++  SESSION_TRACK_SYSTEM_VARIABLES= 0,
++  SESSION_TRACK_SCHEMA,
++  SESSION_TRACK_STATE_CHANGE,
++  SESSION_TRACK_GTIDS,
++  /* currently not supported by MariaDB Server */
++  SESSION_TRACK_TRANSACTION_CHARACTERISTICS,
++  SESSION_TRACK_TRANSACTION_TYPE /* make sure that SESSION_TRACK_END always points
++                                    to last element of enum !! */
++};
++
++#define SESSION_TRACK_BEGIN 0
++#define SESSION_TRACK_END SESSION_TRACK_TRANSACTION_TYPE
++#define SESSION_TRACK_TYPES SESSION_TRACK_END + 1
++
+ enum enum_field_types { MYSQL_TYPE_DECIMAL, MYSQL_TYPE_TINY,
+                         MYSQL_TYPE_SHORT,  MYSQL_TYPE_LONG,
+                         MYSQL_TYPE_FLOAT,  MYSQL_TYPE_DOUBLE,
+diff --git a/libmariadb/CMakeLists.txt b/libmariadb/CMakeLists.txt
+index f07dc02..52d6e0e 100644
+--- a/libmariadb/CMakeLists.txt
++++ b/libmariadb/CMakeLists.txt
+@@ -147,6 +147,8 @@ SET(EXPORT_SYMBOLS
+  mysql_send_query_start
+  mysql_server_end
+  mysql_server_init
++ mysql_session_track_get_next
++ mysql_session_track_get_first
+  mysql_set_character_set
+  mysql_set_character_set_cont
+  mysql_set_character_set_start
+diff --git a/libmariadb/libmariadb.c b/libmariadb/libmariadb.c
+index d64f96b..0d14232 100644
+--- a/libmariadb/libmariadb.c
++++ b/libmariadb/libmariadb.c
+@@ -36,6 +36,7 @@
+ #include <sys/stat.h>
+ #include <signal.h>
+ #include <time.h>
++#include <ma_dyncol.h>
+ #ifdef HAVE_PWD_H
+ #include <pwd.h>
+ #endif
+@@ -83,6 +84,7 @@ static MYSQL_PARAMETERS mariadb_internal_parameters=
+ 
+ static my_bool mysql_client_init=0;
+ static void mysql_close_options(MYSQL *mysql);
++static void ma_clear_session_state(MYSQL *mysql);
+ extern my_bool  my_init_done;
+ extern my_bool  mysql_ps_subsystem_initialized;
+ extern my_bool mysql_handle_local_infile(MYSQL *mysql, const char *filename);
+@@ -1373,6 +1375,11 @@ mysql_init(MYSQL *mysql)
+   }
+   else
+     bzero((char*) (mysql),sizeof(*(mysql)));
++
++  if (!(mysql->extension= (struct st_mariadb_extension *)
++                          calloc(1, sizeof(struct st_mariadb_extension))))
++    goto error;
++
+   mysql->options.connect_timeout=CONNECT_TIMEOUT;
+   mysql->charset= default_charset_info;
+   strmov(mysql->net.sqlstate, "00000");
+@@ -1391,6 +1398,10 @@ mysql_init(MYSQL *mysql)
+ #endif
+   mysql->reconnect= 0;
+   return mysql;
++error:
++  if (mysql->free_me)
++    my_free(mysql);
++  return 0;
+ }
+ 
+ 
+@@ -2326,6 +2337,7 @@ static void mysql_close_options(MYSQL *mysql)
+ 
+ static void mysql_close_memory(MYSQL *mysql)
+ {
++  ma_clear_session_state(mysql);
+   my_free(mysql->host_info);
+   my_free(mysql->user);
+   my_free(mysql->passwd);
+@@ -2368,6 +2380,20 @@ void mysql_close_slow_part(MYSQL *mysql)
+   }
+ }
+ 
++static void ma_clear_session_state(MYSQL *mysql)
++{
++  uint i;
++
++  if (!mysql || !mysql->extension)
++    return;
++
++  for (i= SESSION_TRACK_BEGIN; i <= SESSION_TRACK_END; i++)
++  {
++    list_free(mysql->extension->session_state[i].list, 0);
++  }
++  memset(mysql->extension->session_state, 0, sizeof(struct st_mariadb_session_state) * SESSION_TRACK_TYPES);
++}
++
+ void STDCALL
+ mysql_close(MYSQL *mysql)
+ {
+@@ -2390,6 +2416,7 @@ mysql_close(MYSQL *mysql)
+     }
+     mysql_close_memory(mysql);
+     mysql_close_options(mysql);
++    ma_clear_session_state(mysql);
+     mysql->host_info=mysql->user=mysql->passwd=mysql->db=0;
+    
+     /* Clear pointers for better safety */
+@@ -2440,14 +2467,134 @@ get_info:
+   pos=(uchar*) mysql->net.read_pos;
+   if ((field_count= net_field_length(&pos)) == 0)
+   {
++    size_t item_len;
+     mysql->affected_rows= net_field_length_ll(&pos);
+-    mysql->insert_id=	  net_field_length_ll(&pos);
++    mysql->insert_id= net_field_length_ll(&pos);
+     mysql->server_status=uint2korr(pos); 
+     pos+=2;
+     mysql->warning_count=uint2korr(pos); 
+     pos+=2;
+-    if (pos < mysql->net.read_pos+length && net_field_length(&pos))
+-      mysql->info=(char*) pos;
++    if (pos < mysql->net.read_pos+length)
++    {
++      if ((item_len= net_field_length(&pos)))
++        mysql->info=(char*) pos;
++
++      /* check if server supports session tracking */
++      if (mysql->server_capabilities & CLIENT_SESSION_TRACKING)
++      {
++        ma_clear_session_state(mysql);
++        pos+= item_len;
++
++        if (mysql->server_status & SERVER_SESSION_STATE_CHANGED)
++        {
++          int i;
++          if (pos < mysql->net.read_pos + length)
++          {
++            LIST *session_item;
++            MYSQL_LEX_STRING *str= NULL;
++            enum enum_session_state_type si_type;
++            uchar *old_pos= pos;
++            size_t item_len= net_field_length(&pos);  /* length for all items */
++
++            /* length was already set, so make sure that info will be zero terminated */
++            if (mysql->info)
++              *old_pos= 0;
++
++            while (item_len > 0)
++            {
++              size_t plen;
++              char *data;
++              old_pos= pos;
++              si_type= (enum enum_session_state_type)net_field_length(&pos);
++              switch(si_type) {
++              case SESSION_TRACK_GTIDS:
++                net_field_length(&pos); /* skip encoding */
++              case SESSION_TRACK_SCHEMA:
++              case SESSION_TRACK_STATE_CHANGE:
++              case SESSION_TRACK_TRANSACTION_CHARACTERISTICS:
++              case SESSION_TRACK_SYSTEM_VARIABLES:
++                if (si_type != SESSION_TRACK_STATE_CHANGE)
++                  net_field_length(&pos); /* ignore total length, item length will follow next */
++                plen= net_field_length(&pos);
++                if (!(session_item= ma_multi_malloc(0,
++                                    &session_item, sizeof(LIST),
++                                    &str, sizeof(MYSQL_LEX_STRING),
++                                    &data, plen,
++                                    NULL)))
++                {
++                  ma_clear_session_state(mysql);
++                  SET_CLIENT_ERROR(mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, 0);
++                  return -1;
++                }
++                str->length= plen;
++                str->str= data;
++                memcpy(str->str, (char *)pos, plen);
++                pos+= plen;
++                session_item->data= str;
++                mysql->extension->session_state[si_type].list= list_add(mysql->extension->session_state[si_type].list, session_item);
++
++                /* in case schema has changed, we have to update mysql->db */
++                if (si_type == SESSION_TRACK_SCHEMA)
++                {
++                  free(mysql->db);
++                  mysql->db= malloc(plen + 1);
++                  memcpy(mysql->db, str->str, plen);
++                  mysql->db[plen]= 0;
++                }
++                else if (si_type == SESSION_TRACK_SYSTEM_VARIABLES)
++                {
++                  my_bool set_charset= 0;
++                  /* make sure that we update charset in case it has changed */
++                  if (!strncmp(str->str, "character_set_client", str->length))
++                    set_charset= 1;
++                  plen= net_field_length(&pos);
++                  if (!(session_item= ma_multi_malloc(0,
++                                      &session_item, sizeof(LIST),
++                                      &str, sizeof(MYSQL_LEX_STRING),
++                                      &data, plen,
++                                      NULL)))
++                  {
++                    ma_clear_session_state(mysql);
++                    SET_CLIENT_ERROR(mysql, CR_OUT_OF_MEMORY, SQLSTATE_UNKNOWN, 0);
++                    return -1;
++                  }
++                  str->length= plen;
++                  str->str= data;
++                  memcpy(str->str, (char *)pos, plen);
++                  pos+= plen;
++                  session_item->data= str;
++                  mysql->extension->session_state[si_type].list= list_add(mysql->extension->session_state[si_type].list, session_item);
++                  if (set_charset &&
++                      strncmp(mysql->charset->csname, str->str, str->length) != 0)
++                  {
++                    char cs_name[64];
++                    CHARSET_INFO *cs_info;
++                    memcpy(cs_name, str->str, str->length);
++                    cs_name[str->length]= 0;
++                    if ((cs_info = (CHARSET_INFO *)mysql_find_charset_name(cs_name)))
++                      mysql->charset= cs_info;
++                  }
++                }
++                break;
++              default:
++                /* not supported yet */
++                plen= net_field_length(&pos);
++                pos+= plen;
++                break;
++              }
++              item_len-= (pos - old_pos);
++            }
++          }
++          for (i= SESSION_TRACK_BEGIN; i <= SESSION_TRACK_END; i++)
++          {
++            mysql->extension->session_state[i].list= list_reverse(mysql->extension->session_state[i].list);
++            mysql->extension->session_state[i].current= mysql->extension->session_state[i].list;
++          }
++        }
++      }
++    }
++    else if (mysql->server_capabilities & CLIENT_SESSION_TRACKING)
++      ma_clear_session_state(mysql);
+     DBUG_RETURN(0);
+   }
+   if (field_count == NULL_LENGTH)		/* LOAD DATA LOCAL INFILE */
+@@ -2484,6 +2631,28 @@ get_info:
+   DBUG_RETURN(0);
+ }
+ 
++int STDCALL mysql_session_track_get_next(MYSQL *mysql, enum enum_session_state_type type,
++                                         const char **data, size_t *length)
++{
++  MYSQL_LEX_STRING *str;
++  if (!mysql->extension->session_state[type].current)
++    return 1;
++
++  str= (MYSQL_LEX_STRING *)mysql->extension->session_state[type].current->data;
++  mysql->extension->session_state[type].current= mysql->extension->session_state[type].current->next;
++
++  *data= str->str ? str->str : NULL;
++  *length= str->str ? str->length : 0;
++  return 0;
++}
++
++int STDCALL mysql_session_track_get_first(MYSQL *mysql, enum enum_session_state_type type,
++                                          const char **data, size_t *length)
++{
++  mysql->extension->session_state[type].current= mysql->extension->session_state[type].list;
++  return mysql_session_track_get_next(mysql, type, data, length);
++}
++
+ my_bool STDCALL
+ mysql_read_query_result(MYSQL *mysql)
+ {
+diff --git a/libmariadb/my_alloc.c b/libmariadb/my_alloc.c
+index 991dd6b..ffd5666 100644
+--- a/libmariadb/my_alloc.c
++++ b/libmariadb/my_alloc.c
+@@ -165,3 +165,33 @@ char *memdup_root(MEM_ROOT *root, const char *str, size_t len)
+     memcpy(pos,str,len);
+   return pos;
+ }
++
++void *ma_multi_malloc(myf myFlags, ...)
++{
++  va_list args;
++  char **ptr,*start,*res;
++  size_t tot_length,length;
++
++  va_start(args,myFlags);
++  tot_length=0;
++  while ((ptr=va_arg(args, char **)))
++  {
++    length=va_arg(args, size_t);
++    tot_length+=ALIGN_SIZE(length);
++  }
++  va_end(args);
++
++  if (!(start=(char *)malloc(tot_length)))
++    return 0;
++
++  va_start(args,myFlags);
++  res=start;
++  while ((ptr=va_arg(args, char **)))
++  {
++    *ptr=res;
++    length=va_arg(args,size_t);
++    res+=ALIGN_SIZE(length);
++  }
++  va_end(args);
++  return start;
++}
+
