@@ -130,5 +130,17 @@ mysql_query_rules:
     active = 1
     match_pattern = "application:storefront-renderer,sfr_replica:1"
     destination_hostgroup = 11
+  },
+  {
+    rule_id = 12
+    active = 1
+    match_pattern = "application:storefront-renderer,sfr_replica:2"
+    destination_hostgroup = 12
+  },
+  {
+    rule_id = 13
+    active = 1
+    match_pattern = "application:storefront-renderer,sfr_replica:3"
+    destination_hostgroup = 13
   }$QUERY_RULES
 )
