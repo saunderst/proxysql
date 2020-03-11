@@ -8,6 +8,12 @@ It's deployed, alongside [Taiji][], as part of [shopify-core-datastores](https:/
 
 [Taiji]: https://github.com/Shopify/taiji
 
+# Building on MacOS
+
+1. Navigate to `proxysql`, run `make`
+
+2. `src/proxysql` will be the compiled binary.
+
 # How to :tophat:
 
 If you have changes on a fork you want to test:
