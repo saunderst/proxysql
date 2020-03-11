@@ -9,6 +9,13 @@ MYCFLAGS=-O2
 MYJEOPT=--enable-xmalloc --enable-munmap --enable-prof
 endif
 
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Darwin)
+	MYDOPT=-D OPENSSL_ROOT_DIR=/usr/local/opt/openssl
+else
+	MYDOPT=""
+endif
+
 PROXYSQLCLICKHOUSE := $(shell echo $(PROXYSQLCLICKHOUSE))
 ifeq ($(PROXYSQLCLICKHOUSE),1)
 default: libconfig libdaemon jemalloc mariadb_client re2 sqlite3 pcre clickhouse-cpp lz4 cityhash microhttpd curl
@@ -71,8 +78,7 @@ jemalloc: jemalloc/jemalloc/lib/libjemalloc.a
 mariadb-client-library/mariadb_client/include/my_config.h:
 	cd mariadb-client-library && rm -rf mariadb-connector-c-2.3.1
 	cd mariadb-client-library && tar -zxf mariadb-connector-c-2.3.1-src.tar.gz
-	cd mariadb-client-library/mariadb_client && cmake .
-#	cd mariadb-client-library/mariadb_client && cmake . -DOPENSSL_ROOT_DIR=/usr/local/opt/openssl # this is needed on MacOSX
+	cd mariadb-client-library/mariadb_client && cmake . ${MYDOPT}
 	cd mariadb-client-library/mariadb_client && patch libmariadb/libmariadb.c < ../libmariadb.c.patch
 	cd mariadb-client-library/mariadb_client && patch libmariadb/net.c < ../net.c.patch
 	cd mariadb-client-library/mariadb_client && patch libmariadb/mysql_async.c < ../mysql_async.c.patch

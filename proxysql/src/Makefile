@@ -66,6 +66,8 @@ endif
 
 ifeq ($(UNAME_S),Darwin)
 	MYLIBS=-lssl -lre2 -lmariadbclient -lpthread -lm -lz -liconv -lcrypto
+	IDIRS+= -I/usr/local/opt/openssl/include
+	LDIRS+= -L/usr/local/opt/openssl/lib
 else
 	CURL_DIR=$(DEPS_PATH)/curl/curl
 	IDIRS+= -L$(CURL_DIR)/include
