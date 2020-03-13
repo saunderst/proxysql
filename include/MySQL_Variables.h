@@ -35,14 +35,14 @@ public:
 	virtual ~MySQL_Variables();
 
 	void client_set_value(int idx, const std::string& value);
-	const char* client_get_value(int idx);
-	uint32_t client_get_hash(int idx);
+	const char* client_get_value(int idx) const;
+	uint32_t client_get_hash(int idx) const;
 
 	void server_set_value(int idx, const char* value);
-	const char* server_get_value(int idx);
-	inline uint32_t server_get_hash(int idx);
+	const char* server_get_value(int idx) const;
+	inline uint32_t server_get_hash(int idx) const;
 
-	bool verify_variable(int idx);
+	bool verify_variable(int idx) const;
 	bool update_variable(session_status status, int &_rc);
 	bool on_connect_to_backend();
 };

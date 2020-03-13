@@ -1999,7 +1999,6 @@ bool MySQL_Session::handler_again___status_SETTING_SQL_LOG_BIN(int *_rc) {
 				bool retry_conn=false;
 				// client error, serious
 				proxy_error("Detected a broken connection while setting SQL_LOG_BIN on %s:%d hg %d : %d, %s\n", myconn->parent->address, myconn->parent->port, current_hostgroup, myerr, mysql_error(myconn->mysql));
-				//if ((myds->myconn->reusable==true) && ((myds->myprot.prot_status & SERVER_STATUS_IN_TRANS)==0))
 				if ((myds->myconn->reusable==true) && myds->myconn->IsActiveTransaction()==false && myds->myconn->MultiplexDisabled()==false) {
 					retry_conn=true;
 				}

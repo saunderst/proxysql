@@ -82,9 +82,6 @@ int main(int argc, char** argv) {
 	mysql_close(mysql_a);
 
 
-	//set_admin_global_variable(mysqlAdmin, "mysql-default_charset", "utf8mb4");
-	//set_admin_global_variable(mysqlAdmin, "mysql-default_collation_connection", "latin1_swedish_ci");
-	//if (mysql_query(mysqlAdmin, "load mysql variables to runtime")) return exit_status();
 	MYSQL* mysql_b = mysql_init(NULL);
 	if (!mysql_b) return exit_status();
 	if (!mysql_real_connect(mysql_b, cl.host, cl.username, cl.password, NULL, cl.port, NULL, 0)) return exit_status();

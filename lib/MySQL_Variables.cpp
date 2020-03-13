@@ -7,37 +7,35 @@
 
 #include <sstream>
 
-MySQL_Variables::MySQL_Variables(MySQL_Session* _session) {
+MySQL_Variables::MySQL_Variables(MySQL_Session* _session) : session(_session), is_connected_to_backend(false) {
 	assert(_session);
-	session = _session;
-	is_connected_to_backend = false;
 
 	for (auto i = 0; i < SQL_NAME_LAST; i++) {
 		switch(i) {
-		case SQL_SAFE_UPDATES:
-		case SQL_SELECT_LIMIT:
-		case SQL_SQL_MODE:
-		case SQL_TIME_ZONE:
-		case SQL_CHARACTER_SET_RESULTS:
-		case SQL_CHARACTER_SET_CONNECTION:
-		case SQL_CHARACTER_SET_CLIENT:
-		case SQL_CHARACTER_SET_DATABASE:
-		case SQL_ISOLATION_LEVEL:
-		case SQL_TRANSACTION_READ:
-		case SQL_SESSION_TRACK_GTIDS:
-		case SQL_SQL_AUTO_IS_NULL:
-		case SQL_COLLATION_CONNECTION:
-		case SQL_NET_WRITE_TIMEOUT:
-		case SQL_MAX_JOIN_SIZE:
-			verifiers[i] = ::verify_variable;
-			updaters[i] = update_server_variable;
-			break;
-		case SQL_LOG_BIN:
-			verifiers[i] = ::verify_variable;
-			updaters[i] = logbin_update_server_variable;
-			break;
-		default:
-			updaters[i] = NULL;
+			case SQL_SAFE_UPDATES:
+			case SQL_SELECT_LIMIT:
+			case SQL_SQL_MODE:
+			case SQL_TIME_ZONE:
+			case SQL_CHARACTER_SET_RESULTS:
+			case SQL_CHARACTER_SET_CONNECTION:
+			case SQL_CHARACTER_SET_CLIENT:
+			case SQL_CHARACTER_SET_DATABASE:
+			case SQL_ISOLATION_LEVEL:
+			case SQL_TRANSACTION_READ:
+			case SQL_SESSION_TRACK_GTIDS:
+			case SQL_SQL_AUTO_IS_NULL:
+			case SQL_COLLATION_CONNECTION:
+			case SQL_NET_WRITE_TIMEOUT:
+			case SQL_MAX_JOIN_SIZE:
+				verifiers[i] = ::verify_variable;
+				updaters[i] = update_server_variable;
+				break;
+			case SQL_LOG_BIN:
+				verifiers[i] = ::verify_variable;
+				updaters[i] = logbin_update_server_variable;
+				break;
+			default:
+				updaters[i] = NULL;
 		}
 	}
 }
@@ -89,8 +87,6 @@ void MySQL_Variables::client_set_value(int idx, const std::string& value) {
 				session->mysql_variables->client_set_value(SQL_CHARACTER_SET_CLIENT, session->mysql_variables->client_get_value(SQL_CHARACTER_SET));
 			}
 			if (session->mysql_variables->client_get_value(SQL_CHARACTER_SET_DATABASE)) {
-//				session->mysql_variables->client_set_value(SQL_CHARACTER_SET_CONNECTION, session->mysql_variables->client_get_value(SQL_CHARACTER_SET_DATABASE));
-//				session->mysql_variables->client_set_value(SQL_COLLATION_CONNECTION, session->mysql_variables->client_get_value(SQL_CHARACTER_SET_DATABASE));
 				const MARIADB_CHARSET_INFO *ci = NULL;
 				ci = proxysql_find_charset_name(mysql_tracked_variables[SQL_CHARACTER_SET_CONNECTION].default_value);
 
@@ -127,12 +123,12 @@ void MySQL_Variables::client_set_value(int idx, const std::string& value) {
 	session->client_myds->myconn->variables[idx].value = strdup(value.c_str());
 }
 
-const char* MySQL_Variables::client_get_value(int idx) {
+const char* MySQL_Variables::client_get_value(int idx) const {
 	if (!session || !session->client_myds || !session->client_myds->myconn) return NULL;
 	return session->client_myds->myconn->variables[idx].value;
 }
 
-uint32_t MySQL_Variables::client_get_hash(int idx) {
+uint32_t MySQL_Variables::client_get_hash(int idx) const {
 	if (!session || !session->client_myds || !session->client_myds->myconn) return 0;
 	return session->client_myds->myconn->var_hash[idx];
 }
@@ -147,12 +143,12 @@ void MySQL_Variables::server_set_value(int idx, const char* value) {
 	session->mybe->server_myds->myconn->variables[idx].value = strdup(value);
 }
 
-const char* MySQL_Variables::server_get_value(int idx) {
+const char* MySQL_Variables::server_get_value(int idx) const {
 	if (!session || !session->mybe || !session->mybe->server_myds || !session->mybe->server_myds->myconn) return NULL;
 	return session->mybe->server_myds->myconn->variables[idx].value;
 }
 
-uint32_t MySQL_Variables::server_get_hash(int idx) {
+uint32_t MySQL_Variables::server_get_hash(int idx) const {
 	if (!session || !session->mybe || !session->mybe->server_myds || !session->mybe->server_myds->myconn) return 0;
 	return session->mybe->server_myds->myconn->var_hash[idx];
 }
@@ -169,7 +165,7 @@ bool MySQL_Variables::update_variable(session_status status, int &_rc) {
 	return updaters[idx](session, idx, _rc);
 }
 
-bool MySQL_Variables::verify_variable(int idx) {
+bool MySQL_Variables::verify_variable(int idx) const {
 	auto ret = false;
 	if (likely(verifiers[idx])) {
 		auto client_hash = session->client_myds->myconn->var_hash[idx];
