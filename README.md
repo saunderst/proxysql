@@ -10,9 +10,20 @@ It's deployed, alongside [Taiji][], as part of [shopify-core-datastores](https:/
 
 # Building on MacOS
 
-1. Navigate to `proxysql`, run `make`
+1. Navigate to `proxysql`, run `make` or `make debug` if you're planning to attach with a debugger.
 
 2. `src/proxysql` will be the compiled binary.
+
+## Hacking locally
+
+1. Install [Docker for Mac](https://docs.docker.com/docker-for-mac/install/)
+2. Build ProxySQL (see steps above)
+3. `cd hacking/ && docker-compose up`
+4. `hacking/setup-replication` to configure replication of MySQLs running in Docker
+5. `proxysql/src/proxysql --initial --debug 5 -f -c hacking/proxysql.cfg`
+  * `--debug 5` is log level
+  * `hacking/proxysql.cfg` is the config that should work with docker-compose services, but feel free to tweak that!
+6. ProxySQL should be ready to accept connections. Try it with `mysql -u root -P 3306 -h 127.0.0.1`
 
 # How to :tophat:
 
