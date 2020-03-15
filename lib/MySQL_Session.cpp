@@ -3373,8 +3373,6 @@ handler_again:
 							}
 							if (locked_on_hostgroup == -1 || locked_on_hostgroup_and_all_variables_set == false ) {
 
-								unsigned long long t1 = monotonic_time();
-
 								if (handler_again___verify_backend_multi_statement()) {
 									goto handler_again;
 								}

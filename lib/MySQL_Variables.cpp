@@ -199,7 +199,7 @@ bool validate_charset(MySQL_Session* session, int idx, int &_rc) {
 					return false;
 				case HANDLE_UNKNOWN_CHARSET__REPLACE_WITH_DEFAULT_VERBOSE:
 					ci = proxysql_find_charset_nr(charset);
-					if (!ci)	{
+					if (!ci) {
 						proxy_error("Cannot find character set [%s]\n", session->mysql_variables->client_get_value(idx));
 						assert(0);
 					}
@@ -207,8 +207,7 @@ bool validate_charset(MySQL_Session* session, int idx, int &_rc) {
 
 					if (idx == SQL_COLLATION_CONNECTION) {
 						ci = proxysql_find_charset_collate(mysql_thread___default_variables[idx]);
-					}
-					else {
+					} else {
 						ci = proxysql_find_charset_name(mysql_thread___default_variables[idx]);
 					}
 
@@ -230,8 +229,7 @@ bool validate_charset(MySQL_Session* session, int idx, int &_rc) {
 				case HANDLE_UNKNOWN_CHARSET__REPLACE_WITH_DEFAULT:
 					if (idx == SQL_COLLATION_CONNECTION) {
 						ci = proxysql_find_charset_collate(mysql_thread___default_variables[idx]);
-					}
-					else {
+					} else {
 						ci = proxysql_find_charset_name(mysql_thread___default_variables[idx]);
 					}
 
@@ -281,8 +279,7 @@ bool update_server_variable(MySQL_Session* session, int idx, int &_rc) {
 			if (!strcmp(session->mysql_variables->client_get_value(SQL_CHARACTER_SET_RESULTS), "NULL")) {
 				session->mysql_variables->server_set_value(idx, session->mysql_variables->client_get_value(idx));
 				ret = session->handler_again___status_SETTING_GENERIC_VARIABLE(&_rc, set_var_name, "NULL", no_quote, st);
-			}
-			else if (!strcmp(session->mysql_variables->client_get_value(SQL_CHARACTER_SET_RESULTS), "binary")) {
+			} else if (!strcmp(session->mysql_variables->client_get_value(SQL_CHARACTER_SET_RESULTS), "binary")) {
 				session->mysql_variables->server_set_value(idx, session->mysql_variables->client_get_value(idx));
 				ret = session->handler_again___status_SETTING_GENERIC_VARIABLE(&_rc, set_var_name, "binary", no_quote, st);
 			}
@@ -325,26 +322,26 @@ bool update_server_variable(MySQL_Session* session, int idx, int &_rc) {
 }
 
 inline bool verify_variable(MySQL_Session* session, int idx, uint32_t client_hash, uint32_t server_hash) {
-		if (client_hash != server_hash) {
-				switch(session->status) { // this switch can be replaced with a simple previous_status.push(status), but it is here for readibility
-					case PROCESSING_QUERY:
-						session->previous_status.push(PROCESSING_QUERY);
-						break;
-					case PROCESSING_STMT_PREPARE:
-						session->previous_status.push(PROCESSING_STMT_PREPARE);
-						break;
-					case PROCESSING_STMT_EXECUTE:
-						session->previous_status.push(PROCESSING_STMT_EXECUTE);
-						break;
-					default:
-						proxy_error("Wrong status %d\n", session->status);
-						assert(0);
-						break;
-				}
-				session->set_status(mysql_tracked_variables[idx].status);
-				session->mysql_variables->server_set_value(idx, session->mysql_variables->client_get_value(idx));
-				return true;
+	if (client_hash != server_hash) {
+		switch(session->status) { // this switch can be replaced with a simple previous_status.push(status), but it is here for readibility
+			case PROCESSING_QUERY:
+				session->previous_status.push(PROCESSING_QUERY);
+				break;
+			case PROCESSING_STMT_PREPARE:
+				session->previous_status.push(PROCESSING_STMT_PREPARE);
+				break;
+			case PROCESSING_STMT_EXECUTE:
+				session->previous_status.push(PROCESSING_STMT_EXECUTE);
+				break;
+			default:
+				proxy_error("Wrong status %d\n", session->status);
+				assert(0);
+				break;
 		}
+		session->set_status(mysql_tracked_variables[idx].status);
+		session->mysql_variables->server_set_value(idx, session->mysql_variables->client_get_value(idx));
+		return true;
+	}
 	return false;
 }
 
