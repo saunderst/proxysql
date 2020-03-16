@@ -1,0 +1,191 @@
+version: "3"
+services:
+  mysql-m1:
+    image: "percona:5.7-jessie"
+    command: --server-id=1
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22101
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22101:3306"
+
+  mysql-s1:
+    image: "percona:5.7-jessie"
+    command: --server-id=2
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22201
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22201:3306"
+
+  mysql-s2:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22202
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22202:3306"
+
+  mysql-s3:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22203
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22203:3306"
+
+  mysql-s4:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22204
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22204:3306"
+
+  mysql-s5:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22205
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22205:3306"
+
+  mysql-s6:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22206
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22206:3306"
+
+  mysql-s7:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22207
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22207:3306"
+
+  mysql-s8:
+    image: "percona:5.7-jessie"
+    command: --server-id=3
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --sync-binlog=1
+      --log-slave-updates=ON
+      --gtid-mode=ON
+      --enforce-gtid-consistency=ON
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --report-host=127.0.0.1
+      --report-port=22208
+    environment:
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      MYSQL_ROOT_HOST: '%'
+    ports:
+      - "22208:3306"
+
+ mysql-s9:
+   image: "percona:5.7-jessie"
+   command: --server-id=3
+     --log-bin=mysql-bin
+     --binlog-format=ROW
+     --sync-binlog=1
+     --log-slave-updates=ON
+     --gtid-mode=ON
+     --enforce-gtid-consistency=ON
+     --character-set-server=utf8mb4
+     --collation-server=utf8mb4_unicode_ci
+     --report-host=127.0.0.1
+     --report-port=22209
+   environment:
+     MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+     MYSQL_ROOT_HOST: '%'
+   ports:
+     - "22209:3306"

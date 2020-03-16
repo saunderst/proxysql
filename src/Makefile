@@ -58,10 +58,15 @@ CURL_DIR=$(DEPS_PATH)/curl/curl
 CURL_IDIR=$(CURL_DIR)/include
 CURL_LDIR=$(CURL_DIR)/lib/.libs
 
-SSL_DIR=$(DEPS_PATH)/libssl/openssl/
-SSL_IDIR=$(SSL_DIR)/include
-SSL_LDIR=$(SSL_DIR)
-
+ifeq ($(UNAME_S),Darwin)
+	SSL_DIR=/usr/local/opt/openssl
+	SSL_IDIR=$(SSL_DIR)/include
+	SSL_LDIR=$(SSL_DIR)/lib
+else
+	SSL_DIR=$(DEPS_PATH)/libssl/openssl/
+	SSL_IDIR=$(SSL_DIR)/include
+	SSL_LDIR=$(SSL_DIR)
+endif
 
 EV_DIR=$(DEPS_PATH)/libev/libev/
 EV_IDIR=$(EV_DIR)
@@ -69,13 +74,13 @@ EV_LDIR=$(EV_DIR)/.libs
 
 IDIR=../include
 LDIR=../lib
-IDIRS=-I$(IDIR) -I$(JEMALLOC_IDIR) -I$(MARIADB_IDIR) $(LIBCONFIG_IDIR) -I$(DAEMONPATH_IDIR) -I$(SQLITE3_DIR) -I$(CLICKHOUSE_CPP_DIR) -I$(MICROHTTPD_IDIR) -I$(LIBHTTPSERVER_IDIR) -I$(LIBINJECTION_IDIR) -I$(CURL_IDIR) -I$(EV_IDIR) -I$(SSL_IDIR) -I$(RE2_IDIR)
-LDIRS=-L$(LDIR) -L$(JEMALLOC_LDIR) $(LIBCONFIG_LDIR) -L$(RE2_PATH)/obj -L$(MARIADB_LDIR) -L$(DAEMONPATH_LDIR) -L$(PCRE_LDIR) -L$(MICROHTTPD_LDIR) -L$(LIBHTTPSERVER_LDIR) -L$(LIBINJECTION_LDIR) -L$(CURL_LDIR) -L$(EV_LDIR) -L$(SSL_LDIR)
+IDIRS=-I$(IDIR) -I$(SSL_IDIR) -I$(JEMALLOC_IDIR) -I$(MARIADB_IDIR) $(LIBCONFIG_IDIR) -I$(DAEMONPATH_IDIR) -I$(SQLITE3_DIR) -I$(CLICKHOUSE_CPP_DIR) -I$(MICROHTTPD_IDIR) -I$(LIBHTTPSERVER_IDIR) -I$(LIBINJECTION_IDIR) -I$(CURL_IDIR) -I$(EV_IDIR) -I$(RE2_IDIR)
+LDIRS=-L$(LDIR) -L$(SSL_LDIR) -L$(JEMALLOC_LDIR) $(LIBCONFIG_LDIR) -L$(RE2_PATH)/obj -L$(MARIADB_LDIR) -L$(DAEMONPATH_LDIR) -L$(PCRE_LDIR) -L$(MICROHTTPD_LDIR) -L$(LIBHTTPSERVER_LDIR) -L$(LIBINJECTION_LDIR) -L$(CURL_LDIR) -L$(EV_LDIR)
 
 UNAME_S := $(shell uname -s)
 
 ifeq ($(UNAME_S),Darwin)
-	IDIRS+= -I/usr/local/include -I/usr/local/opt/openssl/include
+	IDIRS+= -I/usr/local/include
 	LDIRS+= -L/usr/local/lib
 endif
 
@@ -97,7 +102,7 @@ MYLIBS=-Wl,--export-dynamic -Wl,-Bstatic -lconfig -lproxysql -ldaemon -ljemalloc
 endif
 
 ifeq ($(UNAME_S),Darwin)
-	MYLIBS=-lssl -lre2 -lmariadbclient -lpthread -lm -lz -liconv -lcrypto -lcurl
+	MYLIBS=-lssl -lre2 -lmariadbclient -lpthread -lm -lz -liconv -lcrypto -lcurl -lev -lgnutls -linjection
 else
 	CURL_DIR=$(DEPS_PATH)/curl/curl
 	IDIRS+= -L$(CURL_DIR)/include

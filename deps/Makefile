@@ -15,6 +15,8 @@ else
 	CENTOSVER := Unknown
 endif
 
+UNAME_S := $(shell uname -s)
+
 PROXYSQLCLICKHOUSE := $(shell echo $(PROXYSQLCLICKHOUSE))
 ifeq ($(PROXYSQLCLICKHOUSE),1)
 default: libconfig libdaemon jemalloc mariadb_client re2 sqlite3 pcre clickhouse-cpp lz4 cityhash microhttpd curl ev libssl libhttpserver libinjection
@@ -66,10 +68,14 @@ curl: curl/curl/lib/.libs/libcurl.a
 libmicrohttpd/libmicrohttpd/src/microhttpd/.libs/libmicrohttpd.a:
 	cd libmicrohttpd && rm -rf libmicrohttpd-0.9.55 || true
 	cd libmicrohttpd && rm -rf libmicrohttpd-0.9.68 || true
+	cd libmicrohttpd && rm -rf libmicrohttpd-0.9.70 || true
 	cd libmicrohttpd && rm -f libmicrohttpd || true
 ifeq ($(CENTOSVER),6.7)
 	cd libmicrohttpd && ln -s libmicrohttpd-0.9.55 libmicrohttpd
 	cd libmicrohttpd && tar -zxf libmicrohttpd-0.9.55.tar.gz
+else ifeq ($(UNAME_S),Darwin)
+	cd libmicrohttpd && ln -s libmicrohttpd-0.9.70 libmicrohttpd
+	cd libmicrohttpd && tar -zxf libmicrohttpd-0.9.70.tar.gz
 else
 	cd libmicrohttpd && ln -s libmicrohttpd-0.9.68 libmicrohttpd
 	cd libmicrohttpd && tar -zxf libmicrohttpd-0.9.68.tar.gz
@@ -117,15 +123,22 @@ jemalloc/jemalloc/lib/libjemalloc.a:
 
 jemalloc: jemalloc/jemalloc/lib/libjemalloc.a
 
+ifeq ($(UNAME_S),Darwin)
+	MARIADB_PREREQ=/usr/local/opt/openssl/lib/libssl.a
+	MARIADB_CMAKE_OPTS=-DOPENSSL_ROOT_DIR=/usr/local/opt/openssl
+else
+	MARIADB_PREREQ=libssl/openssl/libssl.a
+	MARIADB_CMAKE_OPTS=-DCMAKE_BUILD_TYPE=RelWithDebInfo -DOPENSSL_ROOT_DIR=$(shell pwd)/libssl/openssl/ -DOPENSSL_LIBRARIES=$(shell pwd)/libssl/openssl/ .
+endif
 
-mariadb-client-library/mariadb_client/libmariadb/libmariadbclient.a: libssl/openssl/libssl.a
+mariadb-client-library/mariadb_client/libmariadb/libmariadbclient.a: $(MARIADB_PREREQ)
 	cd mariadb-client-library && rm -rf mariadb-connector-c-3.1.4-src
 	cd mariadb-client-library && tar -zxf mariadb-connector-c-3.1.4-src.tar.gz
 	cd mariadb-client-library/mariadb_client && patch ./plugins/auth/CMakeLists.txt < ../plugin_auth_CMakeLists.txt.patch
-	 cd mariadb-client-library/mariadb_client && patch ./CMakeLists.txt < ../CMakeLists.txt.patch
-#	cd mariadb-client-library/mariadb_client && cmake . -DOPENSSL_ROOT_DIR=$(shell pwd)/libssl/openssl/ -DOPENSSL_LIBRARIES=$(shell pwd)/libssl/openssl/ .
-	cd mariadb-client-library/mariadb_client && cmake . -DCMAKE_BUILD_TYPE=RelWithDebInfo -DOPENSSL_ROOT_DIR=$(shell pwd)/libssl/openssl/ -DOPENSSL_LIBRARIES=$(shell pwd)/libssl/openssl/ .
-#	cd mariadb-client-library/mariadb_client && cmake . -DOPENSSL_ROOT_DIR=/usr/local/opt/openssl # this is needed on MacOSX
+	cd mariadb-client-library/mariadb_client && patch ./CMakeLists.txt < ../CMakeLists.txt.patch
+
+	cd mariadb-client-library/mariadb_client && cmake . $(MARIADB_CMAKE_OPTS)
+
 	cd mariadb-client-library/mariadb_client && patch libmariadb/mariadb_stmt.c < ../mariadb_stmt.c.patch
 	cd mariadb-client-library/mariadb_client && patch libmariadb/mariadb_lib.c < ../mariadb_lib.c.patch
 #	cd mariadb-client-library/mariadb_client && patch libmariadb/net.c < ../net.c.patch

@@ -3546,7 +3546,12 @@ MySQL_Session * MySQL_Thread::create_new_session_and_client_data_stream(int _fd)
 		setsockopt(sess->client_myds->fd, SOL_SOCKET, SO_KEEPALIVE, (char *) &arg_on, sizeof(arg_on));
 		if (mysql_thread___tcp_keepalive_time > 0) {
 			int keepalive_time = mysql_thread___tcp_keepalive_time;
-			setsockopt(sess->client_myds->fd, IPPROTO_TCP, TCP_KEEPIDLE, (char *) &keepalive_time, sizeof(keepalive_time));
+#ifdef __APPLE__
+      int keepalive_option = TCP_KEEPALIVE;
+#else
+      int keepalive_option = TCP_KEEPIDLE;
+#endif
+			setsockopt(sess->client_myds->fd, IPPROTO_TCP, keepalive_option, (char *) &keepalive_time, sizeof(keepalive_time));
 		}
 	}
 
