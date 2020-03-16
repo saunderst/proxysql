@@ -4706,10 +4706,14 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 				delete opt2;
 				if (rc && ( i==0 || i==1) ) {
 					//fprintf(stderr,"sql_log_bin=%d\n", i);
-					if (i == 1)
-						mysql_variables->client_set_value(SQL_LOG_BIN, "1");
-					else if (i == 0)
-						mysql_variables->client_set_value(SQL_LOG_BIN, "0");
+					if (i == 1) {
+						if (!mysql_variables->client_set_value(SQL_LOG_BIN, "1"))
+							return false;
+					}
+					else if (i == 0) {
+						if (!mysql_variables->client_set_value(SQL_LOG_BIN, "0"))
+							return false;
+					}
 
 #ifdef DEBUG
 					proxy_info("Setting SQL_LOG_BIN to %d\n", i);
@@ -4823,7 +4827,9 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 						proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Processing SET SQL Mode value %s\n", value1.c_str());
 						uint32_t sql_mode_int=SpookyHash::Hash32(value1.c_str(),value1.length(),10);
 						if (mysql_variables->client_get_hash(SQL_SQL_MODE) != sql_mode_int) {
-							mysql_variables->client_set_value(SQL_SQL_MODE, value1.c_str());
+							if (!mysql_variables->client_set_value(SQL_SQL_MODE, value1.c_str())) {
+								return false;
+							}
 							proxy_debug(PROXY_DEBUG_MYSQL_COM, 8, "Changing connection SQL Mode to %s\n", value1.c_str());
 						}
 						exit_after_SetParse = true;
@@ -4862,10 +4868,13 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 								return false;
 							}
 							if (mysql_variables->client_get_hash(idx) != var_value_int) {
-								if (__tmp_value == 0)
-									mysql_variables->client_set_value(idx, "OFF");
-								else
-									mysql_variables->client_set_value(idx, "ON");
+								if (__tmp_value == 0) {
+									if (!mysql_variables->client_set_value(idx, "OFF"))
+										return false;
+								} else {
+									if (!mysql_variables->client_set_value(idx, "ON"))
+										return false;
+								}
 								proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Changing connection %s to %s\n", var.c_str(), value1.c_str());
 							}
 							exit_after_SetParse = true;
@@ -4940,7 +4949,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 						proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Processing SET Time Zone value %s\n", value1.c_str());
 						uint32_t time_zone_int=SpookyHash::Hash32(value1.c_str(),value1.length(),10);
 						if (mysql_variables->client_get_hash(SQL_TIME_ZONE) != time_zone_int) {
-							mysql_variables->client_set_value(SQL_TIME_ZONE, value1.c_str());
+							if (!mysql_variables->client_set_value(SQL_TIME_ZONE, value1.c_str()))
+								return false;
 							proxy_debug(PROXY_DEBUG_MYSQL_COM, 8, "Changing connection Time zone to %s\n", value1.c_str());
 						}
 						exit_after_SetParse = true;
@@ -4950,7 +4960,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 							proxy_debug(PROXY_DEBUG_MYSQL_COM, 7, "Processing SET session_track_gtids value %s\n", value1.c_str());
 							uint32_t session_track_gtids_int=SpookyHash::Hash32(value1.c_str(),value1.length(),10);
 							if (mysql_variables->client_get_hash(SQL_SESSION_TRACK_GTIDS) != session_track_gtids_int) {
-								mysql_variables->client_set_value(SQL_SESSION_TRACK_GTIDS, value1.c_str());
+								if (!mysql_variables->client_set_value(SQL_SESSION_TRACK_GTIDS, value1.c_str()))
+									return false;
 								proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Changing connection session_track_gtids to %s\n", value1.c_str());
 							}
 							exit_after_SetParse = true;
@@ -4991,7 +5002,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 								return false;
 							}
 							if (mysql_variables->client_get_hash(idx) != var_value_int) {
-								mysql_variables->client_set_value(idx, value1.c_str());
+								if (!mysql_variables->client_set_value(idx, value1.c_str()))
+									return false;
 								proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Changing connection %s to %s\n", var.c_str(), value1.c_str());
 							}
 							exit_after_SetParse = true;
@@ -5038,9 +5050,13 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 								if (!ci) {
 									if (var == "character_set_results") {
 										if (!strcasecmp("NULL", value1.c_str())) {
-											mysql_variables->client_set_value(idx, "NULL");
+											if (!mysql_variables->client_set_value(idx, "NULL")) {
+												return false;
+											}
 										} else if (!strcasecmp("binary", value1.c_str())) {
-											mysql_variables->client_set_value(idx, "binary");
+											if (!mysql_variables->client_set_value(idx, "binary")) {
+												return false;
+											}
 										} else {
 											proxy_error("Cannot find charset/collation [%s]\n", value1.c_str());
 											assert(0);
@@ -5052,15 +5068,20 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 									/* changing collation_connection the character_set_connection will be changed as well
 									 * and vice versa
 									 */
-									if (var == "collation_connection")
-										mysql_variables->client_set_value(SQL_CHARACTER_SET_CONNECTION, ss.str().c_str());
-									if (var == "character_set_connection")
-											mysql_variables->client_set_value(SQL_COLLATION_CONNECTION, ss.str().c_str());
+									if (var == "collation_connection") {
+										if (!mysql_variables->client_set_value(SQL_CHARACTER_SET_CONNECTION, ss.str().c_str()))
+											return false;
+									}
+									if (var == "character_set_connection") {
+											if (!mysql_variables->client_set_value(SQL_COLLATION_CONNECTION, ss.str().c_str()))
+												return false;
+									}
 
 									/* this is explicit statement from client. we do not multiplex, therefor we must
 									 * remember client's choice in the client's variable for future use in verifications, multiplexing etc.
 									 */
-									mysql_variables->client_set_value(idx, ss.str().c_str());
+									if (!mysql_variables->client_set_value(idx, ss.str().c_str()))
+										return false;
 									proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Changing connection %s to %s\n", var.c_str(), value1.c_str());
 								}
 							}
@@ -5117,7 +5138,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 							value1[pos] = ' ';
 						uint32_t isolation_level_int=SpookyHash::Hash32(value1.c_str(),value1.length(),10);
 						if (mysql_variables->client_get_hash(SQL_ISOLATION_LEVEL) != isolation_level_int) {
-							mysql_variables->client_set_value(SQL_ISOLATION_LEVEL, value1.c_str());
+							if (!mysql_variables->client_set_value(SQL_ISOLATION_LEVEL, value1.c_str()))
+								return false;
 							proxy_debug(PROXY_DEBUG_MYSQL_COM, 8, "Changing connection TX ISOLATION to %s\n", value1.c_str());
 						}
 						exit_after_SetParse = true;
@@ -5164,7 +5186,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 					if (rc) {
 						uint32_t sql_mode_int=SpookyHash::Hash32(s1.c_str(),s1.length(),10);
 						if (mysql_variables->client_get_hash(SQL_SQL_MODE) != sql_mode_int) {
-							mysql_variables->client_set_value(SQL_SQL_MODE, s1.c_str());
+							if (!mysql_variables->client_set_value(SQL_SQL_MODE, s1.c_str()))
+								return false;
 							std::size_t found_at = s1.find("@");
 							if (found_at != std::string::npos) {
 								char *v1 = strdup(s1.c_str());
@@ -5232,7 +5255,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 						proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Processing SET SESSION TRANSACTION ISOLATION LEVEL value %s\n", value1.c_str());
 						uint32_t isolation_level_int=SpookyHash::Hash32(value1.c_str(),value1.length(),10);
 						if (mysql_variables->client_get_hash(SQL_ISOLATION_LEVEL) != isolation_level_int) {
-							mysql_variables->client_set_value(SQL_ISOLATION_LEVEL, value1.c_str());
+							if (!mysql_variables->client_set_value(SQL_ISOLATION_LEVEL, value1.c_str()))
+								return false;
 							proxy_debug(PROXY_DEBUG_MYSQL_COM, 8, "Changing connection TRANSACTION ISOLATION LEVEL to %s\n", value1.c_str());
 						}
 						exit_after_SetParse = true;
@@ -5241,7 +5265,8 @@ bool MySQL_Session::handler___status_WAITING_CLIENT_DATA___STATE_SLEEP___MYSQL_C
 						proxy_debug(PROXY_DEBUG_MYSQL_COM, 5, "Processing SET SESSION TRANSACTION READ value %s\n", value1.c_str());
 						uint32_t transaction_read_int=SpookyHash::Hash32(value1.c_str(),value1.length(),10);
 						if (mysql_variables->client_get_hash(SQL_TRANSACTION_READ) != transaction_read_int) {
-							mysql_variables->client_set_value(SQL_TRANSACTION_READ, value1.c_str());
+							if (!mysql_variables->client_set_value(SQL_TRANSACTION_READ, value1.c_str()))
+								return false;
 							proxy_debug(PROXY_DEBUG_MYSQL_COM, 8, "Changing connection TRANSACTION READ to %s\n", value1.c_str());
 						}
 						exit_after_SetParse = true;

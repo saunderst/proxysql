@@ -61,8 +61,11 @@ bool MySQL_Variables::on_connect_to_backend() {
 	return true;
 }
 
-void MySQL_Variables::client_set_value(int idx, const std::string& value) {
-	if (!session || !session->client_myds || !session->client_myds->myconn) return;
+bool MySQL_Variables::client_set_value(int idx, const std::string& value) {
+	if (!session || !session->client_myds || !session->client_myds->myconn) {
+		proxy_warning("Session validation failed\n");
+		return false;
+	}
 
 	/* Process SET NAMES and SET CHARSET commands
 	 * The character_set_client, character_set_results, character_set_connection variables are set here
@@ -121,6 +124,8 @@ void MySQL_Variables::client_set_value(int idx, const std::string& value) {
 		free(session->client_myds->myconn->variables[idx].value);
 	}
 	session->client_myds->myconn->variables[idx].value = strdup(value.c_str());
+
+	return true;
 }
 
 const char* MySQL_Variables::client_get_value(int idx) const {

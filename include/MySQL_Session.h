@@ -1,5 +1,6 @@
 #ifndef __CLASS_MYSQL_SESSION_H
 #define __CLASS_MYSQL_SESSION_H
+#include "MySQL_Variables.h"
 #include "proxysql.h"
 #include "cpp.h"
 
@@ -128,7 +129,6 @@ class MySQL_Session
 	public:
 	bool handler_again___status_SETTING_GENERIC_VARIABLE(int *_rc, const char *var_name, const char *var_value, bool no_quote=false, bool set_transaction=false);
 	bool handler_again___status_SETTING_SQL_LOG_BIN(int *);
-	bool handler_again___status_CHANGING_CHARSET(int *);
 	std::stack<enum session_status> previous_status;
 	void * operator new(size_t);
 	void operator delete(void *);
@@ -151,7 +151,7 @@ class MySQL_Session
 	MySQL_Data_Stream *client_myds;
 	MySQL_Data_Stream *server_myds;
 	char * default_schema;
-	std::unique_ptr<MySQL_Variables> mysql_variables;
+	std::unique_ptr<MySQL_Variables> mysql_variables {nullptr};
 
 	//this pointer is always initialized inside handler().
 	// it is an attempt to start simplifying the complexing of handler()

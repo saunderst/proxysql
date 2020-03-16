@@ -34,7 +34,7 @@ public:
 	MySQL_Variables(MySQL_Session* session);
 	virtual ~MySQL_Variables();
 
-	void client_set_value(int idx, const std::string& value);
+	bool client_set_value(int idx, const std::string& value);
 	const char* client_get_value(int idx) const;
 	uint32_t client_get_hash(int idx) const;
 
