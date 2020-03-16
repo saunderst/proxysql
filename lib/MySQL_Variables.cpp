@@ -42,19 +42,19 @@ MySQL_Variables::MySQL_Variables(MySQL_Session* _session) : session(_session), i
 
 MySQL_Variables::~MySQL_Variables() {}
 
-bool MySQL_Variables::on_connect_to_backend() {
+bool MySQL_Variables::on_connect_to_backend(mysql_variable_st *tracked_variables) {
 	if (!session || !session->mybe || !session->mybe->server_myds || !session->mybe->server_myds->myconn) return false;
 	auto be_version = session->mybe->server_myds->myconn->mysql->server_version;
 
 	if (be_version[0] == '1') {
 		int idx = SQL_NAME_LAST;
 		for (auto i=0; i<SQL_NAME_LAST; i++) {
-			if (mysql_tracked_variables[i].idx == SQL_SESSION_TRACK_GTIDS) {
+			if (tracked_variables[i].idx == SQL_SESSION_TRACK_GTIDS) {
 				idx = i;
 				break;
 			}
 		}
-		mysql_tracked_variables[idx].special_handling = false;
+		tracked_variables[idx].special_handling = false;
 	}
 
 	is_connected_to_backend = true;
