@@ -2386,37 +2386,37 @@ bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, ch
 					qpo->cache_ttl=t;
 				}
 			}
-			if (!strcasecmp(key,"query_delay")) {
+			else if (!strcasecmp(key,"query_delay")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					int t=atoi(value);
 					qpo->delay=t;
 				}
 			}
-			if (!strcasecmp(key,"query_retries")) {
+			else if (!strcasecmp(key,"query_retries")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					int t=atoi(value);
 					qpo->retries=t;
 				}
 			}
-			if (!strcasecmp(key,"query_timeout")) {
+			else if (!strcasecmp(key,"query_timeout")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					int t=atoi(value);
 					qpo->timeout=t;
 				}
 			}
-			if (!strcasecmp(key,"hostgroup")) {
+			else if (!strcasecmp(key,"hostgroup")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					int t=atoi(value);
 					qpo->destination_hostgroup=t;
 				}
 			}
-			if (!strcasecmp(key,"mirror")) {
+			else if (!strcasecmp(key,"mirror")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					int t=atoi(value);
 					qpo->mirror_hostgroup=t;
 				}
 			}
-			if (!strcasecmp(key,"max_lag_ms")) {
+			else if (!strcasecmp(key,"max_lag_ms")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					int t=atoi(value);
 					if (t >= 0 && t <= 600000) {
@@ -2424,7 +2424,7 @@ bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, ch
 					}
 				}
 			}
-			if (!strcasecmp(key,"min_epoch_ms")) {
+			else if (!strcasecmp(key,"min_epoch_ms")) {
 				if (c >= '0' && c <= '9') { // it is a digit
 					unsigned long long now_us = realtime_time();
 					unsigned long long now_ms = now_us/1000;
@@ -2436,14 +2436,8 @@ bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, ch
 					}
 				}
 			}
-			if (!strcasecmp(key,"min_gtid")) {
-				size_t l = strlen(value);
-				if (is_valid_gtid(value, l)) {
-					char *buf=(char*)malloc(l+1);
-					strncpy(buf, value, l);
-					buf[l+1] = '\0';
-					qpo->min_gtid = buf;
-				} else {
+			else if (!strcasecmp(key,"min_gtid")) {
+				if ((qpo->min_gtid = validated_gtid(value)) == NULL) {
 					proxy_warning("Invalid gtid value=%s\n", value);
 				}
 			}
@@ -2457,22 +2451,23 @@ bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, ch
 	return ret;
 }
 
-bool Query_Processor::is_valid_gtid(char *gtid, size_t gtid_len) {
+char * Query_Processor::validated_gtid(char *gtid) {
+  size_t gtid_len = strlen(gtid);
 	if (gtid_len < 3) {
-		return false;
+		return NULL;
 	}
 	char *sep_pos = index(gtid, ':');
 	if (sep_pos == NULL) {
-		return false;
+		return NULL;
 	}
 	size_t uuid_len = sep_pos - gtid;
 	if (uuid_len < 1) {
-		return false;
+		return NULL;
 	}
 	if (gtid_len < uuid_len + 2) {
-		return false;
+		return NULL;
 	}
-	return true;
+	return strdup(gtid);
 }
 
 void Query_Processor::query_parser_free(SQP_par_t *qp) {
