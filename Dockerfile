@@ -1,13 +1,13 @@
 FROM debian:jessie
 RUN apt-get update && apt-get install -y automake cmake make g++ gcc \
-  git libmysqlclient-dev libssl-dev bzip2 libtool
+  git libmysqlclient-dev libssl-dev bzip2 libtool libgnutls28-dev python
 COPY proxysql /tmp/proxysql
 WORKDIR /tmp/proxysql
 RUN make
 RUN make -C tools
 
 FROM debian:jessie
-RUN apt-get update && apt-get install -y libssl1.0.0 mysql-client
+RUN apt-get update && apt-get install -y libssl1.0.0 mysql-client libgnutls-deb0-28 python
 RUN apt-get clean && rm -rf /var/lib/apt/lists/
 RUN mkdir -p /var/lib/proxysql
 COPY --from=0 /tmp/proxysql/src/proxysql /usr/bin/proxysql
