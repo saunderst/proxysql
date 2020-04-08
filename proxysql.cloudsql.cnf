@@ -21,7 +21,6 @@ mysql_variables=
   connect_retries_on_failure=0
   default_charset="utf8mb4"
   free_connections_pct=100
-  connection_warming=true
   max_allowed_packet=16777216
   monitor_enabled=false
   query_retries_on_failure=0
