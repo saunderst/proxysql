@@ -23,6 +23,7 @@ typedef struct _account_details_t {
 	bool __frontend;	// this is used only during the dump
 	bool __backend;	// this is used only during the dump
 	bool __active;
+	char *comment;
 } account_details_t;
 
 typedef std::map<uint64_t, account_details_t *> umap_auth;
@@ -60,10 +61,11 @@ class MySQL_Authentication {
 	public:
 	MySQL_Authentication();
 	~MySQL_Authentication();
-	bool add(char *username, char *password, enum cred_username_type usertype, bool use_ssl, int default_hostgroup, char *default_schema, bool schema_locked, bool transaction_persistent, bool fast_forward, int max_connections);
+	bool add(char *username, char *password, enum cred_username_type usertype, bool use_ssl, int default_hostgroup, char *default_schema, bool schema_locked, bool transaction_persistent, bool fast_forward, int max_connections, char *comment);
 	bool del(char *username, enum cred_username_type usertype, bool set_lock=true);
 	bool reset();
 	void print_version();
+	bool exists(char *username);
 	char * lookup(char *username, enum cred_username_type usertype, bool *use_ssl, int *default_hostgroup, char **default_schema, bool *schema_locked, bool *transaction_persistent, bool *fast_forward, int *max_connections, void **sha1_pass);
 	int dump_all_users(account_details_t ***, bool _complete=true);
 	int increase_frontend_user_connections(char *username, int *mc=NULL);

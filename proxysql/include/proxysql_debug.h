@@ -33,11 +33,11 @@ extern int gdbg;
 #define proxy_error(fmt, ...) \
 	do { \
 		time_t __timer; \
-		char __buffer[25]; \
-		struct tm *__tm_info; \
+		char __buffer[30]; \
+		struct tm __tm_info; \
 		time(&__timer); \
-		__tm_info = localtime(&__timer); \
-		strftime(__buffer, 25, "%Y-%m-%d %H:%M:%S", __tm_info); \
+		localtime_r(&__timer, &__tm_info); \
+		strftime(__buffer, 25, "%Y-%m-%d %H:%M:%S", &__tm_info); \
 		proxy_error_func("%s %s:%d:%s(): [ERROR] " fmt, __buffer, __FILE__, __LINE__, __func__ , ## __VA_ARGS__); \
 	} while(0)
 /*
@@ -108,3 +108,13 @@ extern int gdbg;
 #ifdef DEBUG
 //void *debug_logger();
 #endif
+
+#define ASSERT_SQLITE_OK(rc, db) \
+	do { \
+		if (rc!=SQLITE_OK) { \
+			proxy_error("SQLite3 error with return corde %d. Error message: %s. Shutting down.\n", rc, db?sqlite3_errmsg(db->get_db()):"The pointer to sqlite3 database is null. Cannot get error message."); \
+			assert(0); \
+		} \
+	} while(0)
+
+

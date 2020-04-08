@@ -6,8 +6,11 @@
 #include "cpp.h"
 #include <vector>
 
-typedef struct { uint32_t hash; uint32_t key; } t_symstruct;
+#include "ProxySQL_RESTAPI_Server.hpp"
 
+typedef struct { uint32_t hash; uint32_t key; } t_symstruct;
+class ProxySQL_Config;
+class ProxySQL_Restapi;
 
 class Scheduler_Row {
 	public:
@@ -83,6 +86,7 @@ class ProxySQL_Admin {
 		char *telnet_stats_ifaces;
 		bool admin_read_only;
 		bool hash_passwords;
+		bool vacuum_stats;
 		char * admin_version;
 		char * cluster_username;
 		char * cluster_password;
@@ -99,8 +103,14 @@ class ProxySQL_Admin {
 		int stats_mysql_connection_pool;
 		int stats_mysql_connections;
 		int stats_mysql_query_cache;
+		int stats_mysql_query_digest_to_disk;
 		int stats_system_cpu;
 		int stats_system_memory;
+		int mysql_show_processlist_extended;
+		bool restapi_enabled;
+		bool restapi_enabled_old;
+		int restapi_port;
+		int restapi_port_old;
 		bool web_enabled;
 		bool web_enabled_old;
 		int web_port;
@@ -133,6 +143,7 @@ class ProxySQL_Admin {
 	void __delete_inactive_users(enum cred_username_type usertype);
 	void add_admin_users();
 	void __refresh_users();
+	void __add_active_users_ldap();
 
 	void flush_mysql_variables___runtime_to_database(SQLite3DB *db, bool replace, bool del, bool onlyifempty, bool runtime=false);
 	void flush_mysql_variables___database_to_runtime(SQLite3DB *db, bool replace);
@@ -166,6 +177,9 @@ class ProxySQL_Admin {
 	void flush_sqliteserver_variables___runtime_to_database(SQLite3DB *db, bool replace, bool del, bool onlyifempty, bool runtime=false);
 	void flush_sqliteserver_variables___database_to_runtime(SQLite3DB *db, bool replace);
 	
+	// LDAP
+	void flush_ldap_variables___runtime_to_database(SQLite3DB *db, bool replace, bool del, bool onlyifempty, bool runtime=false);
+	void flush_ldap_variables___database_to_runtime(SQLite3DB *db, bool replace);
 
 	public:
 	pthread_mutex_t sql_query_global_mutex;
@@ -191,12 +205,14 @@ class ProxySQL_Admin {
 	int pipefd[2];
 	void print_version();
 	bool init();
+	void init_ldap();
 	bool get_read_only() { return variables.admin_read_only; }
 	bool set_read_only(bool ro) { variables.admin_read_only=ro; return variables.admin_read_only; }
 	bool has_variable(const char *name);
 	void init_users();
 	void init_mysql_servers();
 	void init_mysql_query_rules();
+	void init_mysql_firewall();
 	void init_proxysql_servers();
 	void save_mysql_users_runtime_to_database(bool _runtime);
 	void save_mysql_servers_runtime_to_database(bool);
@@ -214,11 +230,18 @@ class ProxySQL_Admin {
 	void flush_mysql_servers__from_disk_to_memory();
 	void flush_mysql_query_rules__from_memory_to_disk();
 	void flush_mysql_query_rules__from_disk_to_memory();
+	void flush_mysql_firewall__from_memory_to_disk();
+	void flush_mysql_firewall__from_disk_to_memory();
 	void load_mysql_servers_to_runtime();
 	void save_mysql_servers_from_runtime();
 	char * load_mysql_query_rules_to_runtime();
 	void save_mysql_query_rules_from_runtime(bool);
 	void save_mysql_query_rules_fast_routing_from_runtime(bool);
+	char * load_mysql_firewall_to_runtime();
+	void save_mysql_firewall_from_runtime(bool);
+	void save_mysql_firewall_whitelist_users_from_runtime(bool, SQLite3_result *);
+	void save_mysql_firewall_whitelist_rules_from_runtime(bool, SQLite3_result *);
+	void save_mysql_firewall_whitelist_sqli_fingerprints_from_runtime(bool, SQLite3_result *);
 
 	void load_scheduler_to_runtime();
 	void save_scheduler_runtime_to_database(bool);
@@ -232,11 +255,13 @@ class ProxySQL_Admin {
 	void save_mysql_variables_from_runtime() { flush_mysql_variables___runtime_to_database(admindb, true, true, false); }
 
 	void stats___mysql_query_rules();
-	void stats___mysql_query_digests(bool reset);
+	void stats___mysql_query_digests(bool reset, bool copy=false);
 	//void stats___mysql_query_digests_reset();
 	void stats___mysql_commands_counters();
 	void stats___mysql_processlist();
+	void stats___mysql_free_connections();
 	void stats___mysql_connection_pool(bool _reset);
+	void stats___mysql_errors(bool reset);
 	void stats___memory_metrics();
 	void stats___mysql_global();
 	void stats___mysql_users();
@@ -244,16 +269,13 @@ class ProxySQL_Admin {
 	void stats___proxysql_servers_checksums();
 	void stats___proxysql_servers_metrics();
 	void stats___mysql_prepared_statements_info();
+	void stats___mysql_gtid_executed();
 
-	int Read_Global_Variables_from_configfile(const char *prefix);
-	int Read_MySQL_Users_from_configfile();
-	int Read_MySQL_Query_Rules_from_configfile();
-	int Read_MySQL_Servers_from_configfile();
-	int Read_Scheduler_from_configfile();
-	int Read_ProxySQL_Servers_from_configfile();
+	ProxySQL_Config& proxysql_config();
+	ProxySQL_Restapi& proxysql_restapi();
 
 	void flush_error_log();
-	void GenericRefreshStatistics(const char *query_no_space, unsigned int query_no_space_length, bool admin);
+	bool GenericRefreshStatistics(const char *query_no_space, unsigned int query_no_space_length, bool admin);
 	SQLite3_result * generate_show_table_status(const char *, char **err);
 	SQLite3_result * generate_show_fields_from(const char *tablename, char **err);
 
@@ -274,12 +296,19 @@ class ProxySQL_Admin {
 	void save_proxysql_servers_runtime_to_database(bool);
 	void dump_checksums_values_table();
 
+	// LDAP
+	void init_ldap_variables();
+	void load_ldap_variables_to_runtime() { flush_ldap_variables___database_to_runtime(admindb, true); }
+	void save_ldap_variables_from_runtime() { flush_ldap_variables___runtime_to_database(admindb, true, true, false); }
+	void save_mysql_ldap_mapping_runtime_to_database(bool);
+
 	// SQLite Server
 	void init_sqliteserver_variables();
 	void load_sqliteserver_variables_to_runtime() { flush_sqliteserver_variables___database_to_runtime(admindb, true); }
 	void save_sqliteserver_variables_from_runtime() { flush_sqliteserver_variables___runtime_to_database(admindb, true, true, false); }
 
 	ProxySQL_HTTP_Server *AdminHTTPServer;
+	ProxySQL_RESTAPI_Server *AdminRestApiServer;
 
 #ifdef PROXYSQLCLICKHOUSE
 	// ClickHouse
@@ -292,5 +321,25 @@ class ProxySQL_Admin {
 	void save_clickhouse_users_runtime_to_database(bool _runtime);
 #endif /* PROXYSQLCLICKHOUSE */
 
+	void vacuum_stats(bool);
+	int FlushDigestTableToDisk(SQLite3DB *);
+
+	bool ProxySQL_Test___Load_MySQL_Whitelist(int *, int *, int, int);
+
+
+#ifdef TEST_AURORA
+	void enable_aurora_testing();
+#endif // TEST_AURORA
+
+#ifdef TEST_GALERA
+	void enable_galera_testing();
+#endif // TEST_GALERA
+
+#ifdef TEST_GROUPREP
+	void enable_grouprep_testing();
+#endif // TEST_GROUPREP
+
+	unsigned int ProxySQL_Test___GenerateRandom_mysql_query_rules_fast_routing(unsigned int, bool);
+	bool ProxySQL_Test___Verify_mysql_query_rules_fast_routing(int *ret1, int *ret2, int cnt, int dual);
 };
 #endif /* __CLASS_PROXYSQL_ADMIN_H */

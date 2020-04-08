@@ -1,6 +1,7 @@
 /* c_tokenizer.c */
 // Borrowed from http://www.cplusplus.com/faq/sequences/strings/split/
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -11,6 +12,8 @@ extern __thread int mysql_thread___query_digests_max_query_length;
 #include <ctype.h>
 #define bool char
 extern __thread bool mysql_thread___query_digests_lowercase;
+extern __thread bool mysql_thread___query_digests_replace_null;
+extern __thread bool mysql_thread___query_digests_no_digits;
 
 void tokenizer(tokenizer_t *result, const char* s, const char* delimiters, int empties )
 {
@@ -207,7 +210,11 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 	char fns=0;
 
 	bool lowercase=0;
+	bool replace_null=0;
+	bool replace_number=0;
 	lowercase=mysql_thread___query_digests_lowercase;
+	replace_null = mysql_thread___query_digests_replace_null;
+	replace_number = mysql_thread___query_digests_no_digits;
 
 	while(i < len)
 	{
@@ -240,6 +247,15 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 				flag = 3;
 			}
 
+			else if (*s == '-') {
+				if (prev_char != '-' && i!=(len-1) && ((*(s+1)=='-'))) {
+					flag = 3;
+				}
+				else if (i==0 && ((*(s+1)=='-'))) {
+					flag = 3;
+				}
+			}
+
 			// string - start with '
 			else if(*s == '\'' || *s == '"')
 			{
@@ -250,9 +266,18 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 			// may be digit - start with digit
 			else if(is_token_char(prev_char) && is_digit_char(*s))
 			{
-				flag = 5;
-				if(len == i+1)
-					continue;
+				if (replace_number) {
+					*p_r++ = '?';
+					while(*s != '\0' && is_digit_char(*s)) {
+						s++;
+						i++;
+					}
+				}
+				else {
+					flag = 5;
+					if(len == i+1)
+						continue;
+				}
 			}
 
 			// not above case - remove duplicated space char
@@ -271,6 +296,44 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 					s++;
 					i++;
 					continue;
+				}
+				if (replace_number) {
+					if (!is_digit_char(prev_char) && is_digit_char(*s)) {
+						*p_r++ = '?';
+						while(*s != '\0' && is_digit_char(*s)) {
+							s++;
+							i++;
+						}
+					}
+				}
+				if (replace_null) {
+				if (*s == 'n' || *s == 'N') { // we search for NULL , #2171
+					if (i && is_token_char(prev_char)) {
+						if (len>=4) {
+							if (i<len-3) {
+								// it is only 4 chars, let's skip strncasecmp
+								//if (strncasecmp(s,"null",4)==0) {
+								if (*(s+1) == 'u' || *(s+1) == 'U') {
+									if (*(s+2) == 'l' || *(s+2) == 'L') {
+										if (*(s+3) == 'l' || *(s+3) == 'L') {
+											if (i==len-4) {
+												*p_r++ = '?';
+												*p_r = 0;
+												return r;
+											} else {
+												if (is_token_char(*(s+4))){
+													*p_r++ = '?';
+													s+=4;
+													i+=4;
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
 				}
 			}
 		}
@@ -379,7 +442,17 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 				// Last char process
 				if(len == i + 1)
 				{
+					char *_p = p_r_t;
+					_p-=3;
 					p_r = p_r_t;
+					if ( _p >= r && ( *(_p+2) == '-' || *(_p+2) == '+') ) {
+						if  (
+							( *(_p+1) == ',' ) || ( *(_p+1) == '(' ) ||
+							( ( *(_p+1) == ' ' ) && ( *_p == ',' || *_p == '(' ) )
+						) {
+							p_r--;
+						}
+					}
 					*p_r++ = '?';
 					flag = 0;
 					break;
@@ -404,13 +477,23 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 				// satisfied closing string - swap string to ?
 				if(*s == qutr_char && (len == i+1 || *(s + SIZECHAR) != qutr_char))
 				{
-						p_r = p_r_t;
-						*p_r++ = '?';
-						flag = 0;
-						if(i < len)
-							s++;
-						i++;
-						continue;
+					char *_p = p_r_t;
+					_p-=3;
+					p_r = p_r_t;
+					if ( _p >= r && ( *(_p+2) == '-' || *(_p+2) == '+') ) {
+						if  (
+							( *(_p+1) == ',' ) || ( *(_p+1) == '(' ) ||
+							( ( *(_p+1) == ' ' ) && ( *_p == ',' || *_p == '(' ) )
+						) {
+							p_r--;
+						}
+					}
+					*p_r++ = '?';
+					flag = 0;
+					if(i < len)
+						s++;
+					i++;
+					continue;
 				}
 			}
 
@@ -422,6 +505,16 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 				// last single char
 				if(p_r_t == p_r)
 				{
+					char *_p = p_r_t;
+					_p-=3;
+					if ( _p >= r && ( *(_p+2) == '-' || *(_p+2) == '+') ) {
+						if  (
+							( *(_p+1) == ',' ) || ( *(_p+1) == '(' ) ||
+							( ( *(_p+1) == ' ' ) && ( *_p == ',' || *_p == '(' ) )
+						) {
+							p_r--;
+						}
+					}
 					*p_r++ = '?';
 					i++;
 					continue;
@@ -432,7 +525,17 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 				{
 					if(is_digit_string(p_r_t, p_r))
 					{
+						char *_p = p_r_t;
+						_p-=3;
 						p_r = p_r_t;
+						if ( _p >= r && ( *(_p+2) == '-' || *(_p+2) == '+') ) {
+							if  (
+								( *(_p+1) == ',' ) || ( *(_p+1) == '(' ) ||
+								( ( *(_p+1) == ' ' ) && ( *_p == ',' || *_p == '(' ) )
+							) {
+								p_r--;
+							}
+						}
 						*p_r++ = '?';
 						if(len == i+1)
 						{
@@ -469,6 +572,11 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 		e--;
 		if (*e==' ') {
 			*e=0;
+			// maybe 2 trailing spaces . It happens with comments
+			e--;
+			if (*e==' ') {
+				*e=0;
+			}
 		}
 	}
 
@@ -477,3 +585,127 @@ char *mysql_query_digest_and_first_comment(char *s, int _len, char **first_comme
 	// process query stats
 	return r;
 }
+
+
+char *mysql_query_strip_comments(char *s, int _len) {
+	int i = 0;
+	int len = _len;
+	char *r = (char *) malloc(len + SIZECHAR);
+	char *p_r = r;
+	char *p_r_t = r;
+
+	char prev_char = 0;
+
+	char flag = 0;
+
+	char fns=0;
+
+	bool lowercase=0;
+	lowercase=mysql_thread___query_digests_lowercase;
+
+	while(i < len)
+	{
+		// =================================================
+		// START - read token char and set flag what's going on.
+		// =================================================
+		if(flag == 0)
+		{
+			// store current position
+			p_r_t = p_r;
+
+			// comment type 1 - start with '/*'
+			if(prev_char == '/' && *s == '*')
+			{
+				flag = 1;
+			}
+
+			// comment type 2 - start with '#'
+			else if(*s == '#')
+			{
+				flag = 2;
+			}
+
+			// comment type 3 - start with '--'
+			else if(prev_char == '-' && *s == '-' && ((*(s+1)==' ') || (*(s+1)=='\n') || (*(s+1)=='\r') || (*(s+1)=='\t') ))
+			{
+				flag = 3;
+			}
+			// not above case - remove duplicated space char
+			else
+			{
+				flag = 0;
+				if (fns==0 && is_space_char(*s)) {
+					s++;
+					i++;
+					continue;
+				}
+				if (fns==0) fns=1;
+				if(is_space_char(prev_char) && is_space_char(*s)){
+					prev_char = ' ';
+					*p_r = ' ';
+					s++;
+					i++;
+					continue;
+				}
+			}
+		}
+
+		// =================================================
+		// PROCESS and FINISH - do something on each case
+		// =================================================
+		else
+		{
+			// --------
+			// comment
+			// --------
+			if(
+				// comment type 1 - /* .. */
+				(flag == 1 && prev_char == '*' && *s == '/') ||
+
+				// comment type 2 - # ... \n
+				(flag == 2 && (*s == '\n' || *s == '\r' || (i == len - 1) ))
+				||
+				// comment type 3 - -- ... \n
+				(flag == 3 && (*s == '\n' || *s == '\r' || (i == len -1) ))
+			)
+			{
+				p_r = p_r_t;
+				if (flag == 1 || (i == len -1)) {
+					p_r -= SIZECHAR;
+				}
+				prev_char = ' ';
+				flag = 0;
+				s++;
+				i++;
+				continue;
+			}
+		}
+
+		// =================================================
+		// COPY CHAR
+		// =================================================
+		// convert every space char to ' '
+		if (lowercase==0) {
+			*p_r++ = !is_space_char(*s) ? *s : ' ';
+		} else {
+			*p_r++ = !is_space_char(*s) ? (tolower(*s)) : ' ';
+		}
+		prev_char = *s++;
+
+		i++;
+	}
+
+	// remove a trailing space
+	if (p_r>r) {
+		char *e=p_r;
+		e--;
+		if (*e==' ') {
+			*e=0;
+		}
+	}
+
+	*p_r = 0;
+
+	return r;
+}
+

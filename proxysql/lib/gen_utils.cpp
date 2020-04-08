@@ -1,6 +1,4 @@
-#include "proxysql.h"
-#include "cpp.h"
-
+#include "gen_utils.h"
 
 char *escape_string_single_quotes(char *input, bool free_it) {
 	int i,j,l;
@@ -106,6 +104,39 @@ char *trim_spaces_and_quotes_in_place(char *str) {
 	*(end+1) = 0;
 	return str;
 }
+
+
+bool mywildcmp(const char *p, const char *str) {
+	if (*p == '\0') {
+		if (*str == '\0') {
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	if (*p == '_' || *p == *str) {
+		if (*str == '\0') {
+			return false;
+		} else {
+			return mywildcmp(p + 1, str + 1);
+		}
+	}
+
+	if (*p == '%') {
+		if (mywildcmp(p + 1, str)) {
+			return true;
+		} else {
+			if (*str == '\0') {
+				return false;
+			} else {
+				return mywildcmp(p, str + 1);
+			}
+		}
+	}
+	return false;
+}
+
 
 void * PtrSizeArray::operator new(size_t size) {
 	return l_alloc(size);

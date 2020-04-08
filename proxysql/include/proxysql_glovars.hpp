@@ -52,15 +52,19 @@ class ProxySQL_GlobalVariables {
 	char *datadir;
 	char *admindb;
 	char *statsdb_disk;
+	char *sqlite3serverdb;
 	char *errorlog;
 	char *pid;
 	int restart_on_missing_heartbeats;
 	char * execute_on_exit_failure;
+	char * web_interface_plugin;
+	char * ldap_auth_plugin;
 	struct  {
 		unsigned long long start_time;
 		bool gdbg;
 		bool nostart;
 		bool monitor;
+		bool version_check;
 #ifdef SO_REUSEPORT
 		bool reuseport;
 #endif /* SO_REUSEPORT */

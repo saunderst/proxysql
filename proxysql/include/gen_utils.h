@@ -58,6 +58,13 @@ class PtrArray {
 		pdata=NULL;
 	}
 
+	void reset() {
+		len=0;
+		if (pdata) ( free(pdata) );
+		pdata=NULL;
+		size=0;
+	}
+
 	void *index(unsigned int i) { return pdata[i];}
 
 	void add(void *p) {
@@ -231,3 +238,4 @@ char *escape_string_single_quotes(char *input, bool free_it);
 int remove_spaces(const char *);
 char *trim_spaces_in_place(char *str);
 char *trim_spaces_and_quotes_in_place(char *str);
+bool mywildcmp(const char *p, const char *str);

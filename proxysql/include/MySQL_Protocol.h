@@ -11,23 +11,26 @@ class MySQL_ResultSet {
 	public:
 	bool transfer_started;
 	bool resultset_completed;
+	//bool reset_pid;
 	uint8_t sid;
 	MySQL_Data_Stream *myds;
 	MySQL_Protocol *myprot;
 	MYSQL *mysql;
 	MYSQL_RES *result;
 	unsigned int num_fields;
-	unsigned int num_rows;
+	unsigned long long num_rows;
 	unsigned long long resultset_size;
 	PtrSizeArray PSarrayOUT;
 	//PtrSizeArray *PSarrayOUT;
-	MySQL_ResultSet(MySQL_Protocol *_myprot, MYSQL_RES *_res, MYSQL *_my, MYSQL_STMT *_stmt=NULL);
+	MySQL_ResultSet();
+	void init(MySQL_Protocol *_myprot, MYSQL_RES *_res, MYSQL *_my, MYSQL_STMT *_stmt=NULL);
 	~MySQL_ResultSet();
 	unsigned int add_row(MYSQL_ROW row);
 	unsigned int add_row2(MYSQL_ROWS *row, unsigned char *offset);
 	void add_eof();
 	void add_err(MySQL_Data_Stream *_myds);
 	bool get_resultset(PtrSizeArray *PSarrayFinal);
+	//bool generate_COM_FIELD_LIST_response(PtrSizeArray *PSarrayFinal);
 	unsigned char *buffer;
 	unsigned int buffer_used;
 	void buffer_to_PSarrayOut(bool _last=false);
@@ -48,10 +51,10 @@ class MySQL_Prepared_Stmt_info {
 
 class MySQL_Protocol {
 	private:
-	MySQL_Data_Stream **myds;
 	MySQL_Connection_userinfo *userinfo;
 	MySQL_Session *sess;
 	public:
+	MySQL_Data_Stream **myds;
 #ifdef DEBUG
 	bool dump_pkt;
 #endif
@@ -71,7 +74,7 @@ class MySQL_Protocol {
 	// - a pointer to unsigned int, used to return the size of the packet if not NULL 
 	// for now,  they all return true
 	bool generate_pkt_OK(bool send, void **ptr, unsigned int *len, uint8_t sequence_id, unsigned int affected_rows, uint64_t last_insert_id, uint16_t status, uint16_t warnings, char *msg);
-	bool generate_pkt_ERR(bool send, void **ptr, unsigned int *len, uint8_t sequence_id, uint16_t error_code, char *sql_state, char *sql_message);
+	bool generate_pkt_ERR(bool send, void **ptr, unsigned int *len, uint8_t sequence_id, uint16_t error_code, char *sql_state, const char *sql_message, bool track=false);
 	bool generate_pkt_EOF(bool send, void **ptr, unsigned int *len, uint8_t sequence_id, uint16_t warnings, uint16_t status, MySQL_ResultSet *myrs=NULL);
 //	bool generate_COM_INIT_DB(bool send, void **ptr, unsigned int *len, char *schema);
 	//bool generate_COM_PING(bool send, void **ptr, unsigned int *len);
@@ -106,5 +109,7 @@ class MySQL_Protocol {
 	void generate_STMT_PREPARE_RESPONSE_OK(uint8_t sequence_id, uint32_t stmt_id);
 
 	stmt_execute_metadata_t * get_binds_from_pkt(void *ptr, unsigned int size, MySQL_STMT_Global_info *stmt_info, stmt_execute_metadata_t **stmt_meta);
+
+	bool generate_COM_QUERY_from_COM_FIELD_LIST(PtrSize_t *pkt);
 };
 #endif /* __CLASS_MYSQL_PROTOCOL_H */

@@ -20,6 +20,7 @@ OLDDATADIR="/var/run/proxysql"
 DATADIR="/var/lib/proxysql"
 OPTS="-c /etc/proxysql.cnf -D $DATADIR"
 PIDFILE="$DATADIR/proxysql.pid"
+USER="proxysql"
 
 ulimit -n 102400
 ulimit -c 1073741824
@@ -58,6 +59,51 @@ testpid() {
 	fi
 }
 
+is_pid_child_of_docker() {
+	# Check if docker is installed (no point in checking if docker isn't present)
+	which docker &> /dev/null
+	if [ "$?" -eq 1 ] ; then
+		return 0;
+	fi
+
+	# Check if any docker containers are running (check required since empty output fails next command)
+	if [ "$(docker ps -q | wc -l)" -eq 0 ] ; then
+		return 0;
+	fi
+
+	IFS=$'\n'
+	docker_pids=($(docker ps -q | xargs docker inspect --format '{{.State.Pid}}'))
+	local child_pid=$1
+
+	for i in "${docker_pids[@]}"
+	do
+		if [ "$i" -eq "$child_pid" ] ; then
+			return 1;
+		fi
+	done
+
+	return 0
+}
+
+safe_kill() {
+	local pid=$1
+	local param=$2
+
+	parent_pid=`ps -f $pid | grep proxysql |  awk '{print $3}'`
+	if [ -n "$parent_pid" ]; then
+
+		is_pid_child_of_docker $parent_pid		
+		is_child=$?
+
+		if [[ $is_child -eq 0 ]]; then			
+			kill $param $pid
+		fi
+
+	else ##the process has not parent, I can kill it
+		kill $param $pid
+	fi
+}
+
 initial() {
 	OPTS="--initial $OPTS"
 	start
@@ -74,14 +120,20 @@ start() {
   getpid
   if [ "X$pid" = "X" ]
    then
+                if [ -d /var/run/proxysql ]; then
+                        chmod 1777 /var/run/proxysql
+                else
+                        mkdir /var/run/proxysql && chmod 1777 /var/run/proxysql
+                fi
 		if [ -f $OLDDATADIR/proxysql.db ]
 		then
 			if [ ! -f $DATADIR/proxysql.db ]
 			then
 				mv -iv $OLDDATADIR/proxysql.db $DATADIR/proxysql.db
+                                chown proxysql $DATADIR/proxysql.db
 			fi
 		fi
-	 	proxysql $OPTS
+	 	su - $USER -s /bin/bash -c "proxysql $OPTS"
 		if [ "$?" = "0" ]; then
 			echo "DONE!"
 			return 0
@@ -101,12 +153,12 @@ stop() {
   if [ "X$pid" = "X" ]
 	then
 		echo "ProxySQL was not running."
-		exit 0
+		return 0
 	else
 		# Note: we send a kill to all the processes, not just to the child
 		for i in `pgrep -x proxysql` ; do
 			if [ "$i" != "$$" ]; then
-				kill $i
+				safe_kill $i
 			fi
 		done
 	#  Loop until it does.
@@ -143,7 +195,7 @@ stop() {
 			echo "  Attempting a forced exit..."
 			for i in `pgrep proxysql` ; do
 				if [ "$i" != "$$" ]; then
-					kill -9 $i
+					safe_kill $i '-9'
 				fi
 			done
 		fi

@@ -5,6 +5,10 @@
 #include "re2/regexp.h"
 #include "proxysql.h"
 #include "cpp.h"
+#include "ProxySQL_HTTP_Server.hpp" // HTTP server
+#include "ProxySQL_Statistics.hpp"
+#include "SQLite3_Server.h"
+#include "MySQL_Authentication.hpp"
 
 #include <search.h>
 #include <stdlib.h>
@@ -79,12 +83,15 @@ static char * check_latest_version() {
 	curl_global_init(CURL_GLOBAL_ALL);
 
 	curl_handle = curl_easy_init();
-	curl_easy_setopt(curl_handle, CURLOPT_URL, "http://www.proxysql.com/latest");
+	curl_easy_setopt(curl_handle, CURLOPT_URL, "https://www.proxysql.com/latest");
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
 	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
 
-	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "proxysql-agent/1.4.4");
-	curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 5);
+	string s = "proxysql-agent/";
+	s += PROXYSQL_VERSION;
+	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, s.c_str());
+	curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10);
 	curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 10);
 
 	res = curl_easy_perform(curl_handle);
@@ -125,7 +132,7 @@ static char *generate_home() {
 	html.append("<b>Uptime = </b>");
 	{
 		unsigned long long t1=monotonic_time();
-		char buf1[30];
+		char buf1[50];
 		unsigned long long uptime = (t1-GloVars.global.start_time)/1000/1000;
 		unsigned long long days = uptime / 86400;
 		unsigned long long hours = (uptime - days*86400)/3600;
@@ -596,12 +603,12 @@ int ProxySQL_HTTP_Server::handler(void *cls, struct MHD_Connection *connection, 
 			s1 = generate_canvas((char *)"myChart4");
 			s->append(s1->c_str());
 			s->append("</div>\n");
-			SQLite3_result *mysql_metrics_sqlite = GloProxyStats->get_mysql_metrics(interval_i);
 			char **nm = NULL;
 			char **nl = NULL;
 			char **nv = NULL;
 			char *ts = NULL;
 
+			SQLite3_result *mysql_metrics_sqlite = GloProxyStats->get_mysql_metrics(interval_i);
 			nm = (char **)malloc(sizeof(char *)*6);
 			nm[0] = (char *)"Client_Connections_aborted";
 			nm[1] = (char *)"Client_Connections_connected";
@@ -635,31 +642,70 @@ int ProxySQL_HTTP_Server::handler(void *cls, struct MHD_Connection *connection, 
 			free(ts);
 
 
-			nm = (char **)malloc(sizeof(char *)*4);
+			nm = (char **)malloc(sizeof(char *)*6);
 			nm[0] = (char *)"ConnPool_get_conn_failure";
 			nm[1] = (char *)"ConnPool_get_conn_immediate";
 			nm[2] = (char *)"ConnPool_get_conn_success";
 			nm[3] = (char *)"Questions";
-			nl = (char **)malloc(sizeof(char *)*4);
+			nm[4] = (char *)"Slow_queries";
+			nm[5] = (char *)"GTID_consistent_queries";
+			nl = (char **)malloc(sizeof(char *)*6);
 			nl[0] = (char *)"ConnPool failure";
 			nl[1] = (char *)"ConnPool immediate";
 			nl[2] = (char *)"ConnPool success";
 			nl[3] = (char *)"Questions";
-			nv = (char **)malloc(sizeof(char *)*4);
+			nl[4] = (char *)"Slow Queries";
+			nl[5] = (char *)"GTID Consistent Queries";
+			nv = (char **)malloc(sizeof(char *)*6);
 			nv[0] = extract_values(mysql_metrics_sqlite,8,true);
 			nv[1] = extract_values(mysql_metrics_sqlite,9,true);
 			nv[2] = extract_values(mysql_metrics_sqlite,10,true);
 			nv[3] = extract_values(mysql_metrics_sqlite,11,true);
+			nv[4] = extract_values(mysql_metrics_sqlite,12,true);
+			nv[5] = extract_values(mysql_metrics_sqlite,13,true);
 			ts = extract_ts(mysql_metrics_sqlite,true);
-			s1 = generate_chart((char *)"myChart2",ts,4,nm,nl,nv);
+			s1 = generate_chart((char *)"myChart2",ts,6,nm,nl,nv);
 			s->append(s1->c_str());
 			free(nm);
 			free(nl);
-			for (int aa=0 ; aa<4 ; aa++) {
+			for (int aa=0 ; aa<6 ; aa++) {
 				free(nv[aa]);
 			}
 			free(nv);
 			free(ts);
+
+
+			SQLite3_result *myhgm_metrics_sqlite = GloProxyStats->get_myhgm_metrics(interval_i);
+			nm = (char **)malloc(sizeof(char *)*5);
+			nm[0] = (char *)"MyHGM_myconnpoll_destroy";
+			nm[1] = (char *)"MyHGM_myconnpoll_get";
+			nm[2] = (char *)"MyHGM_myconnpoll_get_ok";
+			nm[3] = (char *)"MyHGM_myconnpoll_push";
+			nm[4] = (char *)"MyHGM_myconnpoll_reset";
+			nl = (char **)malloc(sizeof(char *)*5);
+			nl[0] = (char *)"MyHGM ConnPoll Destroy";
+			nl[1] = (char *)"MyHGM ConnPoll Get";
+			nl[2] = (char *)"MyHGM ConnPoll Get OK";
+			nl[3] = (char *)"MyHGM ConnPoll Push";
+			nl[4] = (char *)"MyHGM ConnPoll Reset";
+			nv = (char **)malloc(sizeof(char *)*5);
+			nv[0] = extract_values(myhgm_metrics_sqlite,2,true);
+			nv[1] = extract_values(myhgm_metrics_sqlite,3,true);
+			nv[2] = extract_values(myhgm_metrics_sqlite,4,true);
+			nv[3] = extract_values(myhgm_metrics_sqlite,5,true);
+			nv[4] = extract_values(myhgm_metrics_sqlite,6,true);
+			ts = extract_ts(myhgm_metrics_sqlite,true);
+			s1 = generate_chart((char *)"myChart3",ts,5,nm,nl,nv);
+			s->append(s1->c_str());
+			free(nm);
+			free(nl);
+			for (int aa=0 ; aa<5 ; aa++) {
+				free(nv[aa]);
+			}
+			free(nv);
+			free(ts);
+
+
 
 			s->append("</body></html>");
 			response = MHD_create_response_from_buffer(s->length(), (void *) s->c_str(), MHD_RESPMEM_MUST_COPY);

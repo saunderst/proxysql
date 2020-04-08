@@ -1,0 +1,9 @@
+@@ -207,8 +207,6 @@
+                                  CLIENT_LONG_FLAG |\
+                                  CLIENT_TRANSACTIONS |\
+                                  CLIENT_SECURE_CONNECTION |\
+-                                 CLIENT_MULTI_RESULTS | \
+-                                 CLIENT_PS_MULTI_RESULTS |\
+                                  CLIENT_PROTOCOL_41 |\
+                                  CLIENT_PLUGIN_AUTH |\
+                                  CLIENT_SESSION_TRACKING |\

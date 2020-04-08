@@ -317,7 +317,7 @@ Query_Cache::Query_Cache() {
 #else
 	if (glovars.has_debug==true) {
 #endif /* DEBUG */
-		perror("Incompatible debagging version");
+		perror("Incompatible debugging version");
 		exit(EXIT_FAILURE);
 	}
 	for (int i=0; i<SHARED_QUERY_CACHE_HASH_TABLES; i++) {
@@ -344,7 +344,7 @@ Query_Cache::~Query_Cache() {
 	}
 };
 
-unsigned char * Query_Cache::get(uint64_t user_hash, const unsigned char *kp, const uint32_t kl, uint32_t *lv, unsigned long long curtime_ms) {
+unsigned char * Query_Cache::get(uint64_t user_hash, const unsigned char *kp, const uint32_t kl, uint32_t *lv, unsigned long long curtime_ms, unsigned long long cache_ttl) {
 	unsigned char *result=NULL;
 
 	uint64_t hk=SpookyHash::Hash64(kp, kl, user_hash);
@@ -354,7 +354,7 @@ unsigned char * Query_Cache::get(uint64_t user_hash, const unsigned char *kp, co
 
 	if (entry!=NULL) {
 		unsigned long long t=curtime_ms;
-		if (entry->expire_ms > t) {
+		if (entry->expire_ms > t && entry->create_ms + cache_ttl > t) {
 			THR_UPDATE_CNT(__thr_cntGetOK,Glo_cntGetOK,1,1);
 			THR_UPDATE_CNT(__thr_dataOUT,Glo_dataOUT,entry->length,1);
 			result=(unsigned char *)malloc(entry->length);
@@ -367,7 +367,7 @@ unsigned char * Query_Cache::get(uint64_t user_hash, const unsigned char *kp, co
 	return result;
 }
 
-bool Query_Cache::set(uint64_t user_hash, const unsigned char *kp, uint32_t kl, unsigned char *vp, uint32_t vl, unsigned long long curtime_ms, unsigned long long expire_ms) {
+bool Query_Cache::set(uint64_t user_hash, const unsigned char *kp, uint32_t kl, unsigned char *vp, uint32_t vl, unsigned long long create_ms, unsigned long long curtime_ms, unsigned long long expire_ms) {
 	QC_entry_t *entry = (QC_entry_t *)malloc(sizeof(QC_entry_t));
 	entry->klen=kl;
 	entry->length=vl;
@@ -376,6 +376,7 @@ bool Query_Cache::set(uint64_t user_hash, const unsigned char *kp, uint32_t kl, 
 	entry->value=(char *)malloc(vl);
 	memcpy(entry->value,vp,vl);
 	entry->self=entry;
+	entry->create_ms=create_ms;
 	entry->access_ms=curtime_ms;
 	entry->expire_ms=expire_ms;
 	uint64_t hk=SpookyHash::Hash64(kp, kl, user_hash);
@@ -402,7 +403,7 @@ void * Query_Cache::purgeHash_thread(void *) {
 	MySQL_Thread * mysql_thr = new MySQL_Thread();
 	MySQL_Monitor__thread_MySQL_Thread_Variables_version=GloMTH->get_global_version();
 	mysql_thr->refresh_variables();
-	max_memory_size=mysql_thread___query_cache_size_MB*1024*1024;
+	max_memory_size = (uint64_t) mysql_thread___query_cache_size_MB*1024*1024;
 	while (shutdown==0) {
 		usleep(purge_loop_time);
 		unsigned long long t=monotonic_time()/1000;
@@ -412,7 +413,7 @@ void * Query_Cache::purgeHash_thread(void *) {
 			if (MySQL_Monitor__thread_MySQL_Thread_Variables_version < glover ) {
 				MySQL_Monitor__thread_MySQL_Thread_Variables_version=glover;
 				mysql_thr->refresh_variables();
-				max_memory_size=mysql_thread___query_cache_size_MB*1024*1024;
+				max_memory_size = (uint64_t) mysql_thread___query_cache_size_MB*1024*1024;
 			}
 		}
 		unsigned int curr_pct=current_used_memory_pct();

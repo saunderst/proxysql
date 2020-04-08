@@ -4,6 +4,8 @@
 #include "proxysql.h"
 #include "cpp.h"
 
+#include "ProxySQL_Statistics.hpp"
+
 //#include "thread.h"
 //#include "wqueue.h"
 
@@ -17,6 +19,7 @@
 #endif /* DEBUG */
 #define PROXYSQL_STATISTICS_VERSION "1.4.1027" DEB
 
+using namespace std;
 extern ProxySQL_Admin *GloAdmin;
 extern MySQL_Threads_Handler *GloMTH;
 
@@ -55,6 +58,7 @@ ProxySQL_Statistics::ProxySQL_Statistics() {
 	statsdb_disk->execute("PRAGMA synchronous=0");
 
 	next_timer_MySQL_Threads_Handler = 0;
+	next_timer_mysql_query_digest_to_disk = 0;
 	next_timer_system_cpu = 0;
 #ifndef NOJEM
 	next_timer_system_memory = 0;
@@ -77,6 +81,8 @@ void ProxySQL_Statistics::init() {
 	tables_defs_statsdb_disk = new std::vector<table_def_t *>;
 	insert_into_tables_defs(tables_defs_statsdb_mem,"mysql_connections", STATSDB_SQLITE_TABLE_MYSQL_CONNECTIONS);
 	insert_into_tables_defs(tables_defs_statsdb_disk,"mysql_connections", STATSDB_SQLITE_TABLE_MYSQL_CONNECTIONS);
+	insert_into_tables_defs(tables_defs_statsdb_disk,"history_mysql_status_variables", STATSDB_SQLITE_TABLE_HISTORY_MYSQL_STATUS_VARIABLES);
+	insert_into_tables_defs(tables_defs_statsdb_disk,"history_stats_mysql_connection_pool", STATSDB_SQLITE_TABLE_HISTORY_STATS_MYSQL_CONNECTION_POOL);
 	insert_into_tables_defs(tables_defs_statsdb_disk,"system_cpu", STATSDB_SQLITE_TABLE_SYSTEM_CPU);
 #ifndef NOJEM
 	insert_into_tables_defs(tables_defs_statsdb_disk,"system_memory", STATSDB_SQLITE_TABLE_SYSTEM_MEMORY);
@@ -96,8 +102,49 @@ void ProxySQL_Statistics::init() {
 	insert_into_tables_defs(tables_defs_statsdb_disk,"mysql_query_cache_hour", STATSDB_SQLITE_TABLE_MYSQL_QUERY_CACHE_HOUR);
 	insert_into_tables_defs(tables_defs_statsdb_disk,"mysql_query_cache_day", STATSDB_SQLITE_TABLE_MYSQL_QUERY_CACHE_DAY);
 
+	insert_into_tables_defs(tables_defs_statsdb_disk,"myhgm_connections", STATSDB_SQLITE_TABLE_MYHGM_CONNECTIONS);
+	insert_into_tables_defs(tables_defs_statsdb_disk,"myhgm_connections_hour", STATSDB_SQLITE_TABLE_MYHGM_CONNECTIONS_HOUR);
+	insert_into_tables_defs(tables_defs_statsdb_disk,"myhgm_connections_day", STATSDB_SQLITE_TABLE_MYHGM_CONNECTIONS_DAY);
+
+	insert_into_tables_defs(tables_defs_statsdb_disk,"history_mysql_query_digest", STATSDB_SQLITE_TABLE_HISTORY_MYSQL_QUERY_DIGEST);
+
+	disk_upgrade_mysql_connections();
+
 	check_and_build_standard_tables(statsdb_mem, tables_defs_statsdb_disk);
 	check_and_build_standard_tables(statsdb_disk, tables_defs_statsdb_disk);
+
+//	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_hostgroup ON history_mysql_query_digest (hostgroup)");
+//	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_username ON history_mysql_query_digest (username)");
+//	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_schemaname ON history_mysql_query_digest (schemaname)");
+//	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_digest ON history_mysql_query_digest (digest)");
+	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_first_seen ON history_mysql_query_digest (first_seen)");
+//	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_last_seen ON history_mysql_query_digest (last_seen)");
+	statsdb_disk->execute("CREATE INDEX IF NOT EXISTS idx_history_mysql_query_digest_dump_time ON history_mysql_query_digest (dump_time)");
+}
+
+void ProxySQL_Statistics::disk_upgrade_mysql_connections() {
+	int rci;
+	rci=statsdb_disk->check_table_structure((char *)"mysql_connections",(char *)STATSDB_SQLITE_TABLE_MYSQL_CONNECTIONS_V1_4);
+	if (rci) {
+		proxy_warning("Detected version v1.4 of table mysql_connections\n");
+		proxy_warning("ONLINE UPGRADE of table mysql_connections in progress\n");
+		statsdb_disk->execute("ALTER TABLE mysql_connections ADD COLUMN GTID_consistent_queries INT NOT NULL DEFAULT 0");
+		proxy_warning("ONLINE UPGRADE of table mysql_connections completed\n");
+	}
+	rci=statsdb_disk->check_table_structure((char *)"mysql_connections_hour",(char *)STATSDB_SQLITE_TABLE_MYSQL_CONNECTIONS_HOUR_V1_4);
+	if (rci) {
+		proxy_warning("Detected version v1.4 of table mysql_connections_hour\n");
+		proxy_warning("ONLINE UPGRADE of table mysql_connections_hour in progress\n");
+		statsdb_disk->execute("ALTER TABLE mysql_connections_hour ADD COLUMN GTID_consistent_queries INT NOT NULL DEFAULT 0");
+		proxy_warning("ONLINE UPGRADE of table mysql_connections_hour completed\n");
+	}
+	rci=statsdb_disk->check_table_structure((char *)"mysql_connections_day",(char *)STATSDB_SQLITE_TABLE_MYSQL_CONNECTIONS_DAY_V1_4);
+	if (rci) {
+		proxy_warning("Detected version v1.4 of table mysql_connections_day\n");
+		proxy_warning("ONLINE UPGRADE of table mysql_connections_day in progress\n");
+		statsdb_disk->execute("ALTER TABLE mysql_connections_day ADD COLUMN GTID_consistent_queries INT NOT NULL DEFAULT 0");
+		proxy_warning("ONLINE UPGRADE of table mysql_connections_day completed\n");
+	}
 }
 
 void ProxySQL_Statistics::print_version() {
@@ -170,6 +217,22 @@ bool ProxySQL_Statistics::MySQL_Query_Cache_timetoget(unsigned long long curtime
 	return false;
 }
 
+bool ProxySQL_Statistics::mysql_query_digest_to_disk_timetoget(unsigned long long curtime) {
+	unsigned int i = (unsigned int)variables.stats_mysql_query_digest_to_disk;
+	if (i) {
+		if (
+			( curtime > next_timer_mysql_query_digest_to_disk )
+			||
+			( curtime + i*1000*1000 < next_timer_mysql_query_digest_to_disk )
+		) {
+			next_timer_mysql_query_digest_to_disk = curtime/1000/1000 + i;
+			next_timer_mysql_query_digest_to_disk = next_timer_mysql_query_digest_to_disk * 1000 * 1000;
+			return true;
+		}
+	}
+	return false;
+}
+
 bool ProxySQL_Statistics::system_cpu_timetoget(unsigned long long curtime) {
 	unsigned int i = (unsigned int)variables.stats_system_cpu;
 	if (i) {
@@ -210,8 +273,8 @@ SQLite3_result * ProxySQL_Statistics::get_mysql_metrics(int interval) {
 	int affected_rows;
 	char *error = NULL;
 	char *query = NULL;
-	char *query1 = (char *)"SELECT SUBSTR(FROM_UNIXTIME(timestamp),0,20) ts, timestamp, Client_Connections_aborted, Client_Connections_connected, Client_Connections_created, Server_Connections_aborted, Server_Connections_connected, Server_Connections_created, ConnPool_get_conn_failure, ConnPool_get_conn_immediate, ConnPool_get_conn_success, Questions FROM mysql_connections WHERE timestamp BETWEEN %d AND %d ORDER BY timestamp";
-	char *query2 = (char *)"SELECT SUBSTR(FROM_UNIXTIME(timestamp),0,20) ts, timestamp, Client_Connections_aborted, Client_Connections_connected, Client_Connections_created, Server_Connections_aborted, Server_Connections_connected, Server_Connections_created, ConnPool_get_conn_failure, ConnPool_get_conn_immediate, ConnPool_get_conn_success, Questions FROM mysql_connections_hour WHERE timestamp BETWEEN %d AND %d ORDER BY timestamp";
+	char *query1 = (char *)"SELECT SUBSTR(FROM_UNIXTIME(timestamp),0,20) ts, timestamp, Client_Connections_aborted, Client_Connections_connected, Client_Connections_created, Server_Connections_aborted, Server_Connections_connected, Server_Connections_created, ConnPool_get_conn_failure, ConnPool_get_conn_immediate, ConnPool_get_conn_success, Questions, Slow_queries, GTID_consistent_queries FROM mysql_connections WHERE timestamp BETWEEN %d AND %d ORDER BY timestamp";
+	char *query2 = (char *)"SELECT SUBSTR(FROM_UNIXTIME(timestamp),0,20) ts, timestamp, Client_Connections_aborted, Client_Connections_connected, Client_Connections_created, Server_Connections_aborted, Server_Connections_connected, Server_Connections_created, ConnPool_get_conn_failure, ConnPool_get_conn_immediate, ConnPool_get_conn_success, Questions, Slow_queries, GTID_consistent_queries FROM mysql_connections_hour WHERE timestamp BETWEEN %d AND %d ORDER BY timestamp";
 	time_t ts = time(NULL);
 	switch (interval) {
 		case 1800:
@@ -254,6 +317,47 @@ SQLite3_result * ProxySQL_Statistics::get_mysql_metrics(int interval) {
 		free(error);
 	}
 */
+	return resultset;
+}
+
+SQLite3_result * ProxySQL_Statistics::get_myhgm_metrics(int interval) {
+	SQLite3_result *resultset = NULL;
+	int cols;
+	int affected_rows;
+	char *error = NULL;
+	char *query = NULL;
+	char *query1 = (char *)"SELECT SUBSTR(FROM_UNIXTIME(timestamp),0,20) ts, timestamp, MyHGM_myconnpoll_destroy, MyHGM_myconnpoll_get, MyHGM_myconnpoll_get_ok, MyHGM_myconnpoll_push, MyHGM_myconnpoll_reset FROM myhgm_connections WHERE timestamp BETWEEN %d AND %d ORDER BY timestamp";
+	char *query2 = (char *)"SELECT SUBSTR(FROM_UNIXTIME(timestamp),0,20) ts, timestamp, MyHGM_myconnpoll_destroy, MyHGM_myconnpoll_get, MyHGM_myconnpoll_get_ok, MyHGM_myconnpoll_push, MyHGM_myconnpoll_reset FROM myhgm_connections_hour WHERE timestamp BETWEEN %d AND %d ORDER BY timestamp";
+	time_t ts = time(NULL);
+	switch (interval) {
+		case 1800:
+		case 3600:
+		case 7200:
+			query = (char *)malloc(strlen(query1)+128);
+			sprintf(query, query1, ts-interval, ts);
+			break;
+		case 28800:
+		case 86400:
+		case 259200:
+		case 604800:
+		case 2592000:
+		case 7776000:
+			query = (char *)malloc(strlen(query2)+128);
+			sprintf(query, query2, ts-interval, ts);
+			break;
+		default:
+			assert(0);
+			break;
+	}
+	statsdb_disk->execute_statement(query, &error , &cols , &affected_rows , &resultset);
+	free(query);
+	if (error) {
+		if (resultset) {
+			delete resultset;
+			resultset = NULL;
+		}
+		free(error);
+	}
 	return resultset;
 }
 
@@ -394,20 +498,16 @@ void ProxySQL_Statistics::system_cpu_sets() {
 		char *query1=NULL;
 		query1=(char *)"INSERT INTO system_cpu VALUES (?1, ?2, ?3)";
 		rc=sqlite3_prepare_v2(mydb3, query1, -1, &statement1, 0);
-		if (rc!=SQLITE_OK) {
-			proxy_error("SQLITE CRITICAL error: %s . Shutting down.\n", sqlite3_errmsg(mydb3));
-			exit(EXIT_SUCCESS);
-		}
-
+		ASSERT_SQLITE_OK(rc, statsdb_disk);
 		time_t ts = time(NULL);
 
-		rc = sqlite3_bind_int64(statement1, 1, ts); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 2, buf.tms_utime); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 3, buf.tms_stime); assert(rc==SQLITE_OK);
+		rc = sqlite3_bind_int64(statement1, 1, ts); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 2, buf.tms_utime); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 3, buf.tms_stime); ASSERT_SQLITE_OK(rc, statsdb_disk);
 
-		assert(rc==SQLITE_OK);
+		ASSERT_SQLITE_OK(rc, statsdb_disk);
 		SAFE_SQLITE3_STEP2(statement1);
-		rc=sqlite3_clear_bindings(statement1); assert(rc==SQLITE_OK);
+		rc=sqlite3_clear_bindings(statement1); ASSERT_SQLITE_OK(rc, statsdb_disk);
 		rc=sqlite3_reset(statement1);
 		sqlite3_finalize(statement1);
 		
@@ -477,17 +577,17 @@ void ProxySQL_Statistics::system_memory_sets() {
 		mallctl("stats.retained", &retained, &sz, NULL, 0);
 
 
-		rc = sqlite3_bind_int64(statement1, 1, ts); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 2, allocated); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 3, resident); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 4, active); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 5, mapped); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 6, metadata); assert(rc==SQLITE_OK);
-		rc = sqlite3_bind_int64(statement1, 7, retained); assert(rc==SQLITE_OK);
+		rc = sqlite3_bind_int64(statement1, 1, ts); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 2, allocated); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 3, resident); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 4, active); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 5, mapped); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 6, metadata); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc = sqlite3_bind_int64(statement1, 7, retained); ASSERT_SQLITE_OK(rc, statsdb_disk);
 
-		assert(rc==SQLITE_OK);
+		ASSERT_SQLITE_OK(rc, statsdb_disk);
 		SAFE_SQLITE3_STEP2(statement1);
-		rc=sqlite3_clear_bindings(statement1); assert(rc==SQLITE_OK);
+		rc=sqlite3_clear_bindings(statement1); ASSERT_SQLITE_OK(rc, statsdb_disk);
 		rc=sqlite3_reset(statement1);
 		sqlite3_finalize(statement1);
 
@@ -532,7 +632,49 @@ void ProxySQL_Statistics::system_memory_sets() {
 }
 #endif
 
-void ProxySQL_Statistics::MySQL_Threads_Handler_sets(SQLite3_result *resultset) {
+void ProxySQL_Statistics::MyHGM_Handler_sets(SQLite3_result *resultset1, SQLite3_result *resultset2) {
+	MyHGM_Handler_sets_v1(resultset1);
+	if (GloVars.web_interface_plugin && resultset2) {
+		MySQL_Threads_Handler_sets_v2(resultset1);
+		MyHGM_Handler_sets_connection_pool(resultset2);
+	}
+}
+
+void ProxySQL_Statistics::MyHGM_Handler_sets_connection_pool(SQLite3_result *resultset) {
+	int rc;
+	if (resultset == NULL)
+		return;
+	sqlite3 *mydb3=statsdb_disk->get_db();
+	sqlite3_stmt *statement=NULL;
+	string query;
+	if (resultset->rows_count == 0) {
+		return;
+	}
+	time_t ts = time(NULL);
+	query = "INSERT INTO history_stats_mysql_connection_pool VALUES (?1";
+	for (int i=0; i < resultset->columns; i++) {
+		query += ",?" + to_string(i+2);
+	}
+	query += ")";
+	rc=sqlite3_prepare_v2(mydb3, query.c_str(), -1, &statement, 0);
+	if (rc!=SQLITE_OK) {
+		proxy_error("SQLITE CRITICAL error: %s . Shutting down.\n", sqlite3_errmsg(mydb3));
+		exit(EXIT_SUCCESS);
+	}
+	for (std::vector<SQLite3_row *>::iterator it = resultset->rows.begin() ; it != resultset->rows.end(); ++it) {
+		SQLite3_row *r=*it;
+		rc=sqlite3_bind_int64(statement, 1, ts); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		for (int i=0 ; i < resultset->columns ; i++) {
+			rc=sqlite3_bind_text(statement, i+2, r->fields[i] , -1, SQLITE_TRANSIENT); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		}
+		SAFE_SQLITE3_STEP2(statement);
+		rc=sqlite3_clear_bindings(statement); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc=sqlite3_reset(statement); //ASSERT_SQLITE_OK(rc, statsdb_disk);
+	}
+	sqlite3_finalize(statement);
+}
+
+void ProxySQL_Statistics::MyHGM_Handler_sets_v1(SQLite3_result *resultset) {
 	int rc;
 	if (resultset == NULL)
 		return;
@@ -543,23 +685,173 @@ void ProxySQL_Statistics::MySQL_Threads_Handler_sets(SQLite3_result *resultset) 
 	char *query1=NULL;
 	//char *query2=NULL;
 	//char *query3=NULL;
-	query1=(char *)"INSERT INTO mysql_connections VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)";
+	query1=(char *)"INSERT INTO myhgm_connections VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
 	rc=sqlite3_prepare_v2(mydb3, query1, -1, &statement1, 0);
 	if (rc!=SQLITE_OK) {
 		proxy_error("SQLITE CRITICAL error: %s . Shutting down.\n", sqlite3_errmsg(mydb3));
 		exit(EXIT_SUCCESS);
 	}
 	//rc=sqlite3_prepare_v2(mydb3, query2, -1, &statement2, 0);
-	//assert(rc==SQLITE_OK);
+	//ASSERT_SQLITE_OK(rc, statsdb_disk);
 	//rc=sqlite3_prepare_v2(mydb3, query3, -1, &statement3, 0);
-	//assert(rc==SQLITE_OK);
+	//ASSERT_SQLITE_OK(rc, statsdb_disk);
 
+	time_t ts = time(NULL);
 
-	uint64_t mysql_connections_values[12];
-	for (int i=0; i<12; i++) {
+	uint64_t myhgm_connections_values[6];
+	for (int i=0; i<6; i++) {
+		myhgm_connections_values[i]=0;
+	}
+	myhgm_connections_values[0] = ts;
+
+	for (std::vector<SQLite3_row *>::iterator it = resultset->rows.begin() ; it != resultset->rows.end(); ++it) {
+		SQLite3_row *r1=*it;
+		if (!strcasecmp(r1->fields[0],"MyHGM_myconnpoll_destroy")) {
+			myhgm_connections_values[1]=atoi(r1->fields[1]);
+			continue;
+		}
+		if (!strcasecmp(r1->fields[0],"MyHGM_myconnpoll_get")) {
+			myhgm_connections_values[2]=atoi(r1->fields[1]);
+			continue;
+		}
+		if (!strcasecmp(r1->fields[0],"MyHGM_myconnpoll_get_ok")) {
+			myhgm_connections_values[3]=atoi(r1->fields[1]);
+			continue;
+		}
+		if (!strcasecmp(r1->fields[0],"MyHGM_myconnpoll_push")) {
+			myhgm_connections_values[4]=atoi(r1->fields[1]);
+			continue;
+		}
+		if (!strcasecmp(r1->fields[0],"MyHGM_myconnpoll_reset")) {
+			myhgm_connections_values[5]=atoi(r1->fields[1]);
+			continue;
+		}
+	}
+
+	for (int i=0; i<6; i++) {
+		rc=sqlite3_bind_int64(statement1, i+1, myhgm_connections_values[i]); ASSERT_SQLITE_OK(rc, statsdb_disk);
+	}
+
+	SAFE_SQLITE3_STEP2(statement1);
+	rc=sqlite3_clear_bindings(statement1); ASSERT_SQLITE_OK(rc, statsdb_disk);
+	rc=sqlite3_reset(statement1); //ASSERT_SQLITE_OK(rc, statsdb_disk);
+	sqlite3_finalize(statement1);
+
+	SQLite3_result *resultset2 = NULL;
+	int cols;
+	int affected_rows;
+	char *error = NULL;
+	char *query = NULL;
+	query = (char *)"SELECT MAX(timestamp) FROM myhgm_connections_hour";
+	statsdb_disk->execute_statement(query, &error , &cols , &affected_rows , &resultset2);
+	if (error) {
+		if (resultset2) {
+			delete resultset2;
+			resultset2 = NULL;
+		}
+		free(error);
+	} else {
+		char buf[1024];
+		if (resultset2->rows_count == 0) {
+			sprintf(buf,"INSERT INTO myhgm_connections_hour SELECT timestamp/3600*3600 , MAX(MyHGM_myconnpoll_destroy), MAX(MyHGM_myconnpoll_get), MAX(MyHGM_myconnpoll_get_ok), MAX(MyHGM_myconnpoll_push), MAX(MyHGM_myconnpoll_reset) FROM myhgm_connections WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
+			statsdb_disk->execute(buf);
+		} else {
+			SQLite3_row *r = resultset2->rows[0];
+			if (r->fields[0]) {
+				time_t t = atol(r->fields[0]);
+				if (ts >= t + 3600) {
+					sprintf(buf,"INSERT INTO myhgm_connections_hour SELECT timestamp/3600*3600 , MAX(MyHGM_myconnpoll_destroy), MAX(MyHGM_myconnpoll_get), MAX(MyHGM_myconnpoll_get_ok), MAX(MyHGM_myconnpoll_push), MAX(MyHGM_myconnpoll_reset) FROM myhgm_connections WHERE timestamp >= %ld AND timestamp < %ld GROUP BY timestamp/3600", t+3600 , (ts/3600)*3600);
+					statsdb_disk->execute(buf);
+				}
+			} else {
+				sprintf(buf,"INSERT INTO myhgm_connections_hour SELECT timestamp/3600*3600 , MAX(MyHGM_myconnpoll_destroy), MAX(MyHGM_myconnpoll_get), MAX(MyHGM_myconnpoll_get_ok), MAX(MyHGM_myconnpoll_push), MAX(MyHGM_myconnpoll_reset) FROM myhgm_connections WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
+				statsdb_disk->execute(buf);
+			}
+		}
+		delete resultset2;
+		resultset2 = NULL;
+		sprintf(buf,"DELETE FROM myhgm_connections WHERE timestamp < %ld", ts - 3600*24*7);
+		statsdb_disk->execute(buf);
+		sprintf(buf,"DELETE FROM myhgm_connections_hour WHERE timestamp < %ld", ts - 3600*24*365);
+		statsdb_disk->execute(buf);
+	}
+}
+
+void ProxySQL_Statistics::MySQL_Threads_Handler_sets(SQLite3_result *resultset) {
+	MySQL_Threads_Handler_sets_v1(resultset);
+	if (GloVars.web_interface_plugin) {
+		MySQL_Threads_Handler_sets_v2(resultset);
+	}
+}
+
+void ProxySQL_Statistics::MySQL_Threads_Handler_sets_v2(SQLite3_result *resultset) {
+	int rc;
+	if (resultset == NULL)
+		return;
+	sqlite3 *mydb3=statsdb_disk->get_db();
+	sqlite3_stmt *statement=NULL;
+	string query;
+	if (resultset->rows_count == 0) {
+		return;
+	}
+	time_t ts = time(NULL);
+	query = "INSERT INTO history_mysql_status_variables VALUES ";
+	int idx = 0;
+	for (int i=0; i < resultset->rows_count; i++) {
+		query += "(?" + to_string(idx+1) + ",?" + to_string(idx+2) + ",?" + to_string(idx+3) + "),";
+		idx+=3;
+	}
+	query.pop_back();
+	rc=sqlite3_prepare_v2(mydb3, query.c_str(), -1, &statement, 0);
+	if (rc!=SQLITE_OK) {
+		proxy_error("SQLITE CRITICAL error: %s . Shutting down.\n", sqlite3_errmsg(mydb3));
+		exit(EXIT_SUCCESS);
+	}
+	idx=0;
+	for (std::vector<SQLite3_row *>::iterator it = resultset->rows.begin() ; it != resultset->rows.end(); ++it) {
+		SQLite3_row *r=*it;
+		rc=sqlite3_bind_int64(statement, idx+1, ts); ASSERT_SQLITE_OK(rc, statsdb_disk);
+		rc=sqlite3_bind_text(statement, idx+2, r->fields[0] , -1, SQLITE_TRANSIENT); ASSERT_SQLITE_OK(rc, statsdb_disk); // name
+		rc=sqlite3_bind_text(statement, idx+3, r->fields[1] , -1, SQLITE_TRANSIENT); ASSERT_SQLITE_OK(rc, statsdb_disk); // value
+		idx+=3;
+	}
+	SAFE_SQLITE3_STEP2(statement);
+	rc=sqlite3_clear_bindings(statement); ASSERT_SQLITE_OK(rc, statsdb_disk);
+	rc=sqlite3_reset(statement); //ASSERT_SQLITE_OK(rc, statsdb_disk);
+	sqlite3_finalize(statement);
+}
+
+void ProxySQL_Statistics::MySQL_Threads_Handler_sets_v1(SQLite3_result *resultset) {
+	int rc;
+	if (resultset == NULL)
+		return;
+	sqlite3 *mydb3=statsdb_disk->get_db();
+	sqlite3_stmt *statement1=NULL;
+	//sqlite3_stmt *statement2=NULL;
+	//sqlite3_stmt *statement3=NULL;
+	char *query1=NULL;
+	//char *query2=NULL;
+	//char *query3=NULL;
+	query1=(char *)"INSERT INTO mysql_connections VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)";
+	//query2=(char *)"INSERT INTO myhgm_connections VALUES (?1, ?2, ?3, ?4, ?5, ?6)";
+	rc=sqlite3_prepare_v2(mydb3, query1, -1, &statement1, 0);
+	if (rc!=SQLITE_OK) {
+		proxy_error("SQLITE CRITICAL error: %s . Shutting down.\n", sqlite3_errmsg(mydb3));
+		exit(EXIT_SUCCESS);
+	}
+	//rc=sqlite3_prepare_v2(mydb3, query2, -1, &statement2, 0);
+	//ASSERT_SQLITE_OK(rc, statsdb_disk);
+	//rc=sqlite3_prepare_v2(mydb3, query3, -1, &statement3, 0);
+	//ASSERT_SQLITE_OK(rc, statsdb_disk);
+
+	time_t ts = time(NULL);
+
+	uint64_t mysql_connections_values[13];
+	for (int i=0; i<13; i++) {
 		mysql_connections_values[i]=0;
 	}
-	mysql_connections_values[0] = time(NULL);
+	mysql_connections_values[0] = ts;
+
 
 	for (std::vector<SQLite3_row *>::iterator it = resultset->rows.begin() ; it != resultset->rows.end(); ++it) {
 		SQLite3_row *r1=*it;
@@ -607,23 +899,27 @@ void ProxySQL_Statistics::MySQL_Threads_Handler_sets(SQLite3_result *resultset) 
 			mysql_connections_values[11]=atoi(r1->fields[1]);
 			continue;
 		}
+		if (!strcasecmp(r1->fields[0],"GTID_consistent_queries")) {
+			mysql_connections_values[12]=atoi(r1->fields[1]);
+			continue;
+		}
 	}
 
-	for (int i=0; i<12; i++) {
-		rc=sqlite3_bind_int64(statement1, i+1, mysql_connections_values[i]); assert(rc==SQLITE_OK);
+	for (int i=0; i<13; i++) {
+		rc=sqlite3_bind_int64(statement1, i+1, mysql_connections_values[i]); ASSERT_SQLITE_OK(rc, statsdb_disk);
 	}
 
 	SAFE_SQLITE3_STEP2(statement1);
-	rc=sqlite3_clear_bindings(statement1); assert(rc==SQLITE_OK);
-	rc=sqlite3_reset(statement1); //assert(rc==SQLITE_OK);
+	rc=sqlite3_clear_bindings(statement1); ASSERT_SQLITE_OK(rc, statsdb_disk);
+	rc=sqlite3_reset(statement1); //ASSERT_SQLITE_OK(rc, statsdb_disk);
 	sqlite3_finalize(statement1);
 
 	SQLite3_result *resultset2 = NULL;
 	int cols;
 	int affected_rows;
 	char *error = NULL;
-	time_t ts = time(NULL);
-	char *query = (char *)"SELECT MAX(timestamp) FROM mysql_connections_hour";
+	char *query = NULL;
+	query = (char *)"SELECT MAX(timestamp) FROM mysql_connections_hour";
 	statsdb_disk->execute_statement(query, &error , &cols , &affected_rows , &resultset2);
 	if (error) {
 		if (resultset2) {
@@ -632,20 +928,20 @@ void ProxySQL_Statistics::MySQL_Threads_Handler_sets(SQLite3_result *resultset) 
 		}
 		free(error);
 	} else {
-		char buf[512];
+		char buf[1024];
 		if (resultset2->rows_count == 0) {
-			sprintf(buf,"INSERT INTO mysql_connections_hour SELECT timestamp/3600*3600 , MAX(Client_Connections_aborted), AVG(Client_Connections_connected), MAX(Client_Connections_created), MAX(Server_Connections_aborted), AVG(Server_Connections_connected), MAX(Server_Connections_created), MAX(ConnPool_get_conn_failure), MAX(ConnPool_get_conn_immediate), MAX(ConnPool_get_conn_success), MAX(Questions), MAX(Slow_queries) FROM mysql_connections WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
+			sprintf(buf,"INSERT INTO mysql_connections_hour SELECT timestamp/3600*3600 , MAX(Client_Connections_aborted), AVG(Client_Connections_connected), MAX(Client_Connections_created), MAX(Server_Connections_aborted), AVG(Server_Connections_connected), MAX(Server_Connections_created), MAX(ConnPool_get_conn_failure), MAX(ConnPool_get_conn_immediate), MAX(ConnPool_get_conn_success), MAX(Questions), MAX(Slow_queries), MAX(GTID_consistent_queries) FROM mysql_connections WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
 			statsdb_disk->execute(buf);
 		} else {
 			SQLite3_row *r = resultset2->rows[0];
 			if (r->fields[0]) {
 				time_t t = atol(r->fields[0]);
 				if (ts >= t + 3600) {
-					sprintf(buf,"INSERT INTO mysql_connections_hour SELECT timestamp/3600*3600 , MAX(Client_Connections_aborted), AVG(Client_Connections_connected), MAX(Client_Connections_created), MAX(Server_Connections_aborted), AVG(Server_Connections_connected), MAX(Server_Connections_created), MAX(ConnPool_get_conn_failure), MAX(ConnPool_get_conn_immediate), MAX(ConnPool_get_conn_success), MAX(Questions), MAX(Slow_queries) FROM mysql_connections WHERE timestamp >= %ld AND timestamp < %ld GROUP BY timestamp/3600", t+3600 , (ts/3600)*3600);
+					sprintf(buf,"INSERT INTO mysql_connections_hour SELECT timestamp/3600*3600 , MAX(Client_Connections_aborted), AVG(Client_Connections_connected), MAX(Client_Connections_created), MAX(Server_Connections_aborted), AVG(Server_Connections_connected), MAX(Server_Connections_created), MAX(ConnPool_get_conn_failure), MAX(ConnPool_get_conn_immediate), MAX(ConnPool_get_conn_success), MAX(Questions), MAX(Slow_queries), MAX(GTID_consistent_queries) FROM mysql_connections WHERE timestamp >= %ld AND timestamp < %ld GROUP BY timestamp/3600", t+3600 , (ts/3600)*3600);
 					statsdb_disk->execute(buf);
 				}
 			} else {
-				sprintf(buf,"INSERT INTO mysql_connections_hour SELECT timestamp/3600*3600 , MAX(Client_Connections_aborted), AVG(Client_Connections_connected), MAX(Client_Connections_created), MAX(Server_Connections_aborted), AVG(Server_Connections_connected), MAX(Server_Connections_created), MAX(ConnPool_get_conn_failure), MAX(ConnPool_get_conn_immediate), MAX(ConnPool_get_conn_success), MAX(Questions), MAX(Slow_queries) FROM mysql_connections WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
+				sprintf(buf,"INSERT INTO mysql_connections_hour SELECT timestamp/3600*3600 , MAX(Client_Connections_aborted), AVG(Client_Connections_connected), MAX(Client_Connections_created), MAX(Server_Connections_aborted), AVG(Server_Connections_connected), MAX(Server_Connections_created), MAX(ConnPool_get_conn_failure), MAX(ConnPool_get_conn_immediate), MAX(ConnPool_get_conn_success), MAX(Questions), MAX(Slow_queries), MAX(GTID_consistent_queries) FROM mysql_connections WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
 				statsdb_disk->execute(buf);
 			}
 		}
@@ -715,12 +1011,12 @@ void ProxySQL_Statistics::MySQL_Query_Cache_sets(SQLite3_result *resultset) {
 	}
 
 	for (int i=0; i<9; i++) {
-		rc=sqlite3_bind_int64(statement1, i+1, qc_values[i]); assert(rc==SQLITE_OK);
+		rc=sqlite3_bind_int64(statement1, i+1, qc_values[i]); ASSERT_SQLITE_OK(rc, statsdb_disk);
 	}
 
 	SAFE_SQLITE3_STEP2(statement1);
-	rc=sqlite3_clear_bindings(statement1); assert(rc==SQLITE_OK);
-	rc=sqlite3_reset(statement1); //assert(rc==SQLITE_OK);
+	rc=sqlite3_clear_bindings(statement1); ASSERT_SQLITE_OK(rc, statsdb_disk);
+	rc=sqlite3_reset(statement1); //ASSERT_SQLITE_OK(rc, statsdb_disk);
 	sqlite3_finalize(statement1);
 
 	SQLite3_result *resultset2 = NULL;
@@ -737,7 +1033,7 @@ void ProxySQL_Statistics::MySQL_Query_Cache_sets(SQLite3_result *resultset) {
 		}
 		free(error);
 	} else {
-		char buf[512];
+		char buf[1024];
 		if (resultset2->rows_count == 0) {
 			sprintf(buf,"INSERT INTO mysql_query_cache_hour SELECT timestamp/3600*3600 , MAX(count_GET), MAX(count_GET_OK), MAX(count_SET), MAX(bytes_IN), MAX(bytes_OUT), MAX(Entries_Purged), AVG(Entries_In_Cache), AVG(Memory_bytes) FROM mysql_query_cache WHERE timestamp < %ld GROUP BY timestamp/3600", (ts/3600)*3600);
 			statsdb_disk->execute(buf);

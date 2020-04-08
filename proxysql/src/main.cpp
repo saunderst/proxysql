@@ -9,18 +9,80 @@
 //#define PROXYSQL_EXTERN
 #include "cpp.h"
 
+#include "ProxySQL_Statistics.hpp"
+#include "MySQL_PreparedStatement.h"
+#include "ProxySQL_Cluster.hpp"
+#include "MySQL_Logger.hpp"
+#include "SQLite3_Server.h"
+#include "query_processor.h"
+#include "MySQL_Authentication.hpp"
+#include "MySQL_LDAP_Authentication.hpp"
+#include "proxysql_restapi.h"
+#include "Web_Interface.hpp"
+
 
 #include <libdaemon/dfork.h>
 #include <libdaemon/dsignal.h>
 #include <libdaemon/dlog.h>
 #include <libdaemon/dpid.h>
 #include <libdaemon/dexec.h>
+#include "ev.h"
+
+#include "curl/curl.h"
+
+#include <openssl/x509v3.h>
+
+#include <sys/mman.h>
+
+/*
+extern "C" MySQL_LDAP_Authentication * create_MySQL_LDAP_Authentication_func() {
+	return NULL;
+}
+*/
+
+volatile create_MySQL_LDAP_Authentication_t * create_MySQL_LDAP_Authentication = NULL;
+void * __mysql_ldap_auth;
+
+volatile create_Web_Interface_t * create_Web_Interface = NULL;
+void * __web_interface;
+
+// absolute path of ssl files
+char *ssl_key_fp = NULL;
+char *ssl_cert_fp = NULL;
+char *ssl_ca_fp = NULL;
+
+char *binary_sha1 = NULL;
 
 // MariaDB client library redefines dlerror(), see https://mariadb.atlassian.net/browse/CONC-101
 #ifdef dlerror
 #undef dlerror
 #endif
 
+struct dh_st {
+	int pad;
+	int version;
+	BIGNUM *p;
+	BIGNUM *g;
+	long length;
+	BIGNUM *pub_key;
+	BIGNUM *priv_key;
+	int flags;
+	BN_MONT_CTX *method_mont_p;
+	BIGNUM *q;
+	BIGNUM *j;
+	unsigned char *seed;
+	int seedlen;
+	BIGNUM *counter;
+	int references;
+	CRYPTO_EX_DATA ex_data;
+	const DH_METHOD *meth;
+	ENGINE *engine;
+	CRYPTO_RWLOCK *lock;
+};
+
+
+static pthread_mutex_t *lockarray;
+#include <openssl/crypto.h>
 
 
 // this fuction will be called as a deatached thread
@@ -31,6 +93,138 @@ static void * waitpid_thread(void *arg) {
 	free(cpid_ptr);
 	return NULL;
 }
+
+
+/*
+
+generated with: $ openssl dhparam -5 -C 2048
+
+-----BEGIN DH PARAMETERS-----
+MIIBCAKCAQEAtS5UPzxesyj7QtLe6hRGE1Cv4TnDbSzKTmy0izFabdn0wR1QVmij
+S8YSb1jE+O7IGImtk84Wg4y141PAHkCMTEeCMKH5tOD0WfiVyuQDTp4Vbt0vOReM
+hK7tgLHLC1P3v0nxFCcce3U6IXmXBQ9IkNMFcXSRIAdBOjPkFPfbZ648qSgcoX+z
+gfEP9WAXeeNGk62rDb3R0mguA9HcQ4NyKk6ETBVsZD4bTAcSIBaX05ISV7qY2eLj
+9HFYBXYX4cxBfMyiqGrCj2IMg8aRKmf7rTvwBQXT0cWmu+kpnlpXIjx6vdpBmeKd
+hSypLEcUVIvzc6rtfWlYKT35wQ+AGKNADwIBBQ==
+-----END DH PARAMETERS-----
+
+*/
+
+
+#ifndef HEADER_DH_H
+#include <openssl/dh.h>
+#endif
+DH *get_dh2048()
+	{
+	static unsigned char dh2048_p[]={
+		0xB5,0x2E,0x54,0x3F,0x3C,0x5E,0xB3,0x28,0xFB,0x42,0xD2,0xDE,
+		0xEA,0x14,0x46,0x13,0x50,0xAF,0xE1,0x39,0xC3,0x6D,0x2C,0xCA,
+		0x4E,0x6C,0xB4,0x8B,0x31,0x5A,0x6D,0xD9,0xF4,0xC1,0x1D,0x50,
+		0x56,0x68,0xA3,0x4B,0xC6,0x12,0x6F,0x58,0xC4,0xF8,0xEE,0xC8,
+		0x18,0x89,0xAD,0x93,0xCE,0x16,0x83,0x8C,0xB5,0xE3,0x53,0xC0,
+		0x1E,0x40,0x8C,0x4C,0x47,0x82,0x30,0xA1,0xF9,0xB4,0xE0,0xF4,
+		0x59,0xF8,0x95,0xCA,0xE4,0x03,0x4E,0x9E,0x15,0x6E,0xDD,0x2F,
+		0x39,0x17,0x8C,0x84,0xAE,0xED,0x80,0xB1,0xCB,0x0B,0x53,0xF7,
+		0xBF,0x49,0xF1,0x14,0x27,0x1C,0x7B,0x75,0x3A,0x21,0x79,0x97,
+		0x05,0x0F,0x48,0x90,0xD3,0x05,0x71,0x74,0x91,0x20,0x07,0x41,
+		0x3A,0x33,0xE4,0x14,0xF7,0xDB,0x67,0xAE,0x3C,0xA9,0x28,0x1C,
+		0xA1,0x7F,0xB3,0x81,0xF1,0x0F,0xF5,0x60,0x17,0x79,0xE3,0x46,
+		0x93,0xAD,0xAB,0x0D,0xBD,0xD1,0xD2,0x68,0x2E,0x03,0xD1,0xDC,
+		0x43,0x83,0x72,0x2A,0x4E,0x84,0x4C,0x15,0x6C,0x64,0x3E,0x1B,
+		0x4C,0x07,0x12,0x20,0x16,0x97,0xD3,0x92,0x12,0x57,0xBA,0x98,
+		0xD9,0xE2,0xE3,0xF4,0x71,0x58,0x05,0x76,0x17,0xE1,0xCC,0x41,
+		0x7C,0xCC,0xA2,0xA8,0x6A,0xC2,0x8F,0x62,0x0C,0x83,0xC6,0x91,
+		0x2A,0x67,0xFB,0xAD,0x3B,0xF0,0x05,0x05,0xD3,0xD1,0xC5,0xA6,
+		0xBB,0xE9,0x29,0x9E,0x5A,0x57,0x22,0x3C,0x7A,0xBD,0xDA,0x41,
+		0x99,0xE2,0x9D,0x85,0x2C,0xA9,0x2C,0x47,0x14,0x54,0x8B,0xF3,
+		0x73,0xAA,0xED,0x7D,0x69,0x58,0x29,0x3D,0xF9,0xC1,0x0F,0x80,
+		0x18,0xA3,0x40,0x0F,
+		};
+	static unsigned char dh2048_g[]={
+		0x05,
+		};
+	DH *dh;
+
+	if ((dh=DH_new()) == NULL) return(NULL);
+	dh->p=BN_bin2bn(dh2048_p,sizeof(dh2048_p),NULL);
+	dh->g=BN_bin2bn(dh2048_g,sizeof(dh2048_g),NULL);
+	if ((dh->p == NULL) || (dh->g == NULL))
+		{ DH_free(dh); return(NULL); }
+	return(dh);
+}
+
+struct MemoryStruct {
+	char *memory;
+	size_t size;
+};
+
+
+static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, void *userp) {
+	size_t realsize = size * nmemb;
+	struct MemoryStruct *mem = (struct MemoryStruct *)userp;
+	mem->memory = (char *)realloc(mem->memory, mem->size + realsize + 1);
+	assert(mem->memory);
+	memcpy(&(mem->memory[mem->size]), contents, realsize);
+	mem->size += realsize;
+	mem->memory[mem->size] = 0;
+	return realsize;
+}
+
+
+static char * main_check_latest_version() {
+	CURL *curl_handle;
+	CURLcode res;
+	struct MemoryStruct chunk;
+	chunk.memory = (char *)malloc(1);
+	chunk.size = 0;
+	curl_global_init(CURL_GLOBAL_ALL);
+	curl_handle = curl_easy_init();
+	curl_easy_setopt(curl_handle, CURLOPT_URL, "https://www.proxysql.com/latest");
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+	curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&chunk);
+	curl_easy_setopt(curl_handle, CURLOPT_SSL_VERIFYPEER, 0);
+
+	string s = "proxysql-agent/";
+	s += PROXYSQL_VERSION;
+	if (binary_sha1) {
+		s += " (" ;
+			s+= binary_sha1;
+		s += ")" ;
+	}
+	curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, s.c_str());
+	curl_easy_setopt(curl_handle, CURLOPT_TIMEOUT, 10);
+	curl_easy_setopt(curl_handle, CURLOPT_CONNECTTIMEOUT, 10);
+
+	res = curl_easy_perform(curl_handle);
+
+	if (res != CURLE_OK) {
+		switch (res) {
+			case CURLE_COULDNT_RESOLVE_HOST:
+			case CURLE_COULDNT_CONNECT:
+			case CURLE_OPERATION_TIMEDOUT:
+				break;
+			default:
+				proxy_error("curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+				break;
+		}
+		free(chunk.memory);
+		chunk.memory = NULL;
+	}
+	curl_easy_cleanup(curl_handle);
+	curl_global_cleanup();
+	return chunk.memory;
+}
+
+void * main_check_latest_version_thread(void *arg) {
+	char * latest_version = main_check_latest_version();
+	if (latest_version) {
+		proxy_info("Latest ProxySQL version available: %s\n", latest_version);
+	}
+	free(latest_version);
+	return NULL;
+}
+
+
 
 
 
@@ -105,33 +299,349 @@ struct cpu_timer
 	unsigned long long begin;
 };
 
+
+static void lock_callback(int mode, int type, const char *file, int line) { 
+	(void)file;
+	(void)line;
+	if(mode & CRYPTO_LOCK) {
+		pthread_mutex_lock(&(lockarray[type]));
+	} else {
+		pthread_mutex_unlock(&(lockarray[type]));
+	}
+}
+
+static unsigned long thread_id(void) {
+	unsigned long ret;
+	ret = (unsigned long)pthread_self();
+	return ret;
+}
+
+static void init_locks(void) {
+	int i;
+	lockarray = (pthread_mutex_t *)OPENSSL_malloc(CRYPTO_num_locks() * sizeof(pthread_mutex_t));
+	for(i = 0; i<CRYPTO_num_locks(); i++) {
+		pthread_mutex_init(&(lockarray[i]), NULL);
+	}
+	CRYPTO_set_id_callback((unsigned long (*)())thread_id);
+	CRYPTO_set_locking_callback((void (*)(int, int, const char *, int))lock_callback);
+}
+
+X509 * generate_x509(EVP_PKEY *pkey, const unsigned char *cn, uint32_t serial, int days, X509 *ca_x509, EVP_PKEY *ca_pkey) {
+	int rc;
+	X509 * x = NULL;
+	X509_NAME * name= NULL;
+	if ((x = X509_new()) == NULL) {
+		proxy_error("Unable to run X509_new()\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	X509_set_version(x, 2);
+	ASN1_INTEGER_set(X509_get_serialNumber(x), serial);
+	X509_gmtime_adj(X509_get_notBefore(x), 0);
+	X509_gmtime_adj(X509_get_notAfter(x), (long)60 * 60 * 24 * days);
+	rc = X509_set_pubkey(x, pkey);
+	if (rc==0){
+		proxy_error("Unable to set pubkey: %s\n", ERR_error_string(ERR_get_error(),NULL));
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	name = X509_get_subject_name(x);
+
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC, cn, -1, -1, 0);
+
+	if (ca_x509) {
+		rc = X509_set_issuer_name(x, X509_get_subject_name(ca_x509));
+	} else {
+		X509_EXTENSION* extension = X509V3_EXT_conf_nid(NULL, NULL, NID_basic_constraints, "critical, CA:FALSE");
+		X509_add_ext(x, extension, -1);
+		rc = X509_set_issuer_name(x, name);
+	}
+	if (rc==0) {
+		proxy_error("Unable to set issuer: %s\n", ERR_error_string(ERR_get_error(),NULL));
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+
+	if (ca_pkey) {
+		rc = X509_sign(x, ca_pkey, EVP_sha256());
+	} else {
+		rc = X509_sign(x, pkey, EVP_sha256());
+	}
+	if (rc==0) {
+		proxy_error("Unable to X509 sign: %s\n", ERR_error_string(ERR_get_error(),NULL));
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	return x;
+}
+
+void write_x509(const char *filen, X509 *x) {
+	BIO * x509file = NULL;
+	x509file = BIO_new_file(filen, "w" );
+	if (!x509file ) {
+		proxy_error("Error on BIO_new_file\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	if (!PEM_write_bio_X509( x509file, x)) {
+		proxy_error("Error on PEM_write_bio_X509 for %s\n", filen);
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	BIO_free_all( x509file );
+}
+
+void write_rsa_key(const char *filen, RSA *rsa) {
+	BIO* pOut = BIO_new_file(filen, "w");
+	if (!pOut) {
+		proxy_error("Error on BIO_new_file\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	if (!PEM_write_bio_RSAPrivateKey( pOut, rsa, NULL, NULL, 0, NULL, NULL)) {
+		proxy_error("Error on PEM_write_bio_RSAPrivateKey for %s\n", filen);
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	BIO_free_all( pOut );
+}
+
+EVP_PKEY * rsa_key_read(const char *filen) {
+	EVP_PKEY * pkey = NULL;
+	RSA * rsa = NULL;
+
+	BIO * pIn = BIO_new_file(filen,"r");
+	if (!pIn) {
+		proxy_error("Error on BIO_new_file\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	rsa= PEM_read_bio_RSAPrivateKey( pIn , NULL, NULL,  NULL);
+	if (rsa==NULL) {
+		proxy_error("Error on PEM_read_bio_RSAPrivateKey for %s\n", filen);
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	pkey = EVP_PKEY_new();
+	EVP_PKEY_assign_RSA(pkey, rsa);
+	BIO_free(pIn);
+	return pkey;
+}
+
+X509 * read_x509(const char *filen) {
+	X509 * x = NULL;
+	BIO * x509file = NULL;
+	x509file = BIO_new_file(filen, "r" );
+	if (!x509file ) {
+		proxy_error("Error on BIO_new_file\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	x = PEM_read_bio_X509( x509file, NULL, NULL, NULL);
+	if (x == NULL) {
+		proxy_error("Error on PEM_read_bio_X509 for %s\n", filen);
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+	BIO_free_all( x509file );
+	return x;
+}
+
+
+int ssl_mkit(X509 **x509ca, X509 **x509p, EVP_PKEY **pkeyp, int bits, int serial, int days) {
+	X509 *x1;
+	X509 *x2;
+	EVP_PKEY *pk;
+	RSA *rsa;
+	DH *dh;
+	//X509_NAME *name = NULL;
+
+	// relative path to datadir of ssl files
+	const char * ssl_key_rp = (const char *)"proxysql-key.pem";
+	const char * ssl_cert_rp = (const char *)"proxysql-cert.pem";
+	const char * ssl_ca_rp = (const char *)"proxysql-ca.pem";
+
 /*
+	// absolute path of ssl files
+	char *ssl_key_fp = NULL;
+	char *ssl_cert_fp = NULL;
+	char *ssl_ca_fp = NULL;
+*/
+	// how many files exists ?
+	int nfiles = 0;
+	bool ssl_key_exists = true;
+	bool ssl_cert_exists = true;
+	bool ssl_ca_exists = true;
+
+	// check if files exists
+	ssl_key_fp = (char *)malloc(strlen(GloVars.datadir)+strlen(ssl_key_rp)+8);
+	sprintf(ssl_key_fp,"%s/%s",GloVars.datadir,ssl_key_rp);
+	if (access(ssl_key_fp, R_OK)) {
+		ssl_key_exists = false;
+		//free(ssl_key);
+		//ssl_key = NULL;
+	}
+
+	ssl_cert_fp = (char *)malloc(strlen(GloVars.datadir)+strlen(ssl_cert_rp)+8);
+	sprintf(ssl_cert_fp,"%s/%s",GloVars.datadir,ssl_cert_rp);
+	if (access(ssl_cert_fp, R_OK)) {
+		ssl_cert_exists = false;
+		//free(ssl_cert);
+		//ssl_cert = NULL;
+	}
+
+	ssl_ca_fp = (char *)malloc(strlen(GloVars.datadir)+strlen(ssl_ca_rp)+8);
+	sprintf(ssl_ca_fp,"%s/%s",GloVars.datadir,ssl_ca_rp);
+	if (access(ssl_ca_fp, R_OK)) {
+		ssl_ca_exists = false;
+		//free(ssl_ca);
+		//ssl_ca = NULL;
+	}
+
+	nfiles += (ssl_key_exists ? 1 : 0);
+	nfiles += (ssl_cert_exists ? 1 : 0);
+	nfiles += (ssl_ca_exists ? 1 : 0);
+
+	if ((nfiles != 0 && nfiles != 3)) {
+		proxy_error("Only some SSL files are present. Either all files are present, or none. Exiting.\n");
+		proxy_error("%s : %s\n" , ssl_key_rp, (ssl_key_exists ? (char *)"YES" : (char *)"NO"));
+		proxy_error("%s : %s\n" , ssl_cert_rp, (ssl_cert_exists ? (char *)"YES" : (char *)"NO"));
+		proxy_error("%s : %s\n" , ssl_ca_rp, (ssl_ca_exists ? (char *)"YES" : (char *)"NO"));
+		exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+	}
+
+	if (nfiles == 0) {
+		proxy_info("No SSL keys/certificates found in datadir (%s). Generating new keys/certificates.\n", GloVars.datadir);
+		if ((pkeyp == NULL) || (*pkeyp == NULL)) {
+			if ((pk = EVP_PKEY_new()) == NULL) {
+				proxy_error("Unable to run EVP_PKEY_new()\n");
+				exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+			}
+		} else
+			pk = *pkeyp;
+
+		rsa = RSA_new();
+
+		if (!rsa) {
+			proxy_error("Unable to run RSA_new()\n");
+			exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+		}
+		BIGNUM *e= BN_new();
+		if (!e) {
+			proxy_error("Unable to run BN_new()\n");
+			exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+		}
+		if (!BN_set_word(e, RSA_F4) || !RSA_generate_key_ex(rsa, bits, e, NULL)) {
+			RSA_free(rsa);
+			BN_free(e);
+			proxy_error("Unable to run BN_new()\n");
+			exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+		}
+		BN_free(e);
+
+
+		write_rsa_key(ssl_key_fp, rsa);
+
+		if (!EVP_PKEY_assign_RSA(pk, rsa)) {
+			proxy_error("Unable to run EVP_PKEY_assign_RSA()\n");
+			exit(EXIT_SUCCESS); // we exit gracefully to avoid being restarted
+		}
+		time_t t = time(NULL);
+		x1 = generate_x509(pk, (const unsigned char *)"ProxySQL_Auto_Generated_CA_Certificate", t, 3650, NULL, NULL);
+		write_x509(ssl_ca_fp, x1);
+		x2 = generate_x509(pk, (const unsigned char *)"ProxySQL_Auto_Generated_Server_Certificate", t, 3650, x1, pk);
+		write_x509(ssl_cert_fp, x2);
+
+		rsa = NULL;
+	} else {
+		proxy_info("SSL keys/certificates found in datadir (%s): loading them.\n", GloVars.datadir);
+		pk = rsa_key_read(ssl_key_fp);
+		x1 = read_x509(ssl_ca_fp);
+		x2 = read_x509(ssl_cert_fp);
+	}
+	*x509ca = x1;
+	*x509p = x2;
+	*pkeyp = pk;
+
+	dh = get_dh2048();
+
+	if (SSL_CTX_set_tmp_dh(GloVars.global.ssl_ctx, dh) == 0) {
+		proxy_error("Error in SSL while initializing DH: %s . Shutting down.\n",ERR_error_string(ERR_get_error(), NULL));
+		exit(EXIT_SUCCESS); // EXIT_SUCCESS to avoid a restart loop
+	}
+
+
+	return 1;
+}
+
 void ProxySQL_Main_init_SSL_module() {
-	SSL_library_init();
+	int rc = SSL_library_init();
+	if (rc==0) {
+		proxy_error("%s\n", SSL_alert_desc_string_long(rc));
+	}
+	init_locks();
+	proxy_info("Using OpenSSL version: %s\n", OpenSSL_version(OPENSSL_VERSION));
 	SSL_METHOD *ssl_method;
 	OpenSSL_add_all_algorithms();
 	SSL_load_error_strings();
-	ssl_method = (SSL_METHOD *)TLSv1_server_method();
+	//ssl_method = (SSL_METHOD *)TLSv1_server_method();
+	//ssl_method = (SSL_METHOD *)SSLv23_server_method();
+	ssl_method = (SSL_METHOD *)TLS_server_method();
 	GloVars.global.ssl_ctx = SSL_CTX_new(ssl_method);
 	if (GloVars.global.ssl_ctx==NULL)	{
 		ERR_print_errors_fp(stderr);
-		abort();
+		proxy_error("Unable to initialize SSL. Shutting down...\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
+	}
+	if (!SSL_CTX_set_min_proto_version(GloVars.global.ssl_ctx,TLS1_VERSION)) {
+		proxy_error("Unable to initialize SSL. SSL_set_min_proto_version failed. Shutting down...\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
+	}
+	//SSL_CTX_set_options(GloVars.global.ssl_ctx, SSL_OP_NO_SSLv3); // no necessary, because of previous SSL_CTX_set_min_proto_version
+#ifdef DEBUG
+	{
+		STACK_OF(SSL_CIPHER) *ciphers;
+		ciphers = SSL_CTX_get_ciphers(GloVars.global.ssl_ctx);
+		fprintf(stderr,"List of cipher avaiable:\n");
+		if (ciphers) {
+			int num = sk_SSL_CIPHER_num(ciphers);
+			char buf[130];
+			for(int i = 0; i < num; i++){
+				const SSL_CIPHER *cipher = sk_SSL_CIPHER_value(ciphers, i);
+				fprintf(stderr,"%s:  %s\n", SSL_CIPHER_get_name(cipher), SSL_CIPHER_description(cipher, buf, 128));
+			}
+		}
+	}
+#endif
+	BIO *bio_err;
+	X509 *x509 = NULL;
+	X509 *x509ca = NULL;
+	EVP_PKEY *pkey = NULL;
+
+	CRYPTO_mem_ctrl(CRYPTO_MEM_CHECK_OFF);
+
+	bio_err = BIO_new_fp(stderr, BIO_NOCLOSE);
+
+	if (ssl_mkit(&x509ca, &x509, &pkey, 2048, 0, 730) == 0) {
+		proxy_error("Unable to initialize SSL. Shutting down...\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
 	}
 
-	if ( SSL_CTX_use_certificate_file(GloVars.global.ssl_ctx, "newreq.pem", SSL_FILETYPE_PEM) <= 0 )	{
+	if ( SSL_CTX_use_certificate(GloVars.global.ssl_ctx, x509) <= 0 )	{
 		ERR_print_errors_fp(stderr);
-		abort();
+		proxy_error("Unable to use SSL certificate. Shutting down...\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
 	}
-	if ( SSL_CTX_use_PrivateKey_file(GloVars.global.ssl_ctx, "privkey.pem", SSL_FILETYPE_PEM) <= 0 ) {
+	if ( SSL_CTX_add_extra_chain_cert(GloVars.global.ssl_ctx, x509ca) <= 0 )	{
 		ERR_print_errors_fp(stderr);
-		abort();
+		proxy_error("Unable to use SSL CA chain. Shutting down...\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
+	}
+	if ( SSL_CTX_use_PrivateKey(GloVars.global.ssl_ctx, pkey) <= 0 ) {
+		ERR_print_errors_fp(stderr);
+		proxy_error("Unable to use SSL key. Shutting down...\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
 	}
 	if ( !SSL_CTX_check_private_key(GloVars.global.ssl_ctx) ) {
-		fprintf(stderr, "Private key does not match the public certificate\n");
-		abort();
+		proxy_error("Private key does not match the public certificate\n");
+		exit(EXIT_SUCCESS); // we exit gracefully to not be restarted
 	}
+
+	X509_free(x509);
+	EVP_PKEY_free(pkey);
+
+
+	BIO_free(bio_err);
 }
-*/
+
 
 /*
 void example_listern() {
@@ -165,7 +675,7 @@ void * __qc;
 void * __mysql_thread;
 void * __mysql_threads_handler;
 void * __query_processor;
-void * __mysql_auth; 
+//void * __mysql_auth; 
 
 
 
@@ -183,7 +693,7 @@ static volatile int load_;
 //#else
 //const char *malloc_conf = "xmalloc:true,lg_tcache_max:16,purge:decay";
 #ifndef __FreeBSD__
-const char *malloc_conf = "xmalloc:true,lg_tcache_max:16,purge:decay,prof:true,prof_leak:true,lg_prof_sample:20,lg_prof_interval:30,prof_active:false";
+const char *malloc_conf = "xmalloc:true,lg_tcache_max:16,prof:true,prof_leak:true,lg_prof_sample:20,lg_prof_interval:30,prof_active:false";
 #endif
 //#endif /* DEBUG */
 //const char *malloc_conf = "prof_leak:true,lg_prof_sample:0,prof_final:true,xmalloc:true,lg_tcache_max:16";
@@ -194,13 +704,14 @@ int socket_fd;
 
 Query_Cache *GloQC;
 MySQL_Authentication *GloMyAuth;
+MySQL_LDAP_Authentication *GloMyLdapAuth;
 #ifdef PROXYSQLCLICKHOUSE
 ClickHouse_Authentication *GloClickHouseAuth;
 #endif /* PROXYSQLCLICKHOUSE */
 Query_Processor *GloQPro;
 ProxySQL_Admin *GloAdmin;
-MySQL_Threads_Handler *GloMTH;
-
+MySQL_Threads_Handler *GloMTH = NULL;
+Web_Interface *GloWebInterface;
 MySQL_STMT_Manager_v14 *GloMyStmt;
 
 MySQL_Monitor *GloMyMon;
@@ -288,6 +799,7 @@ void * mysql_shared_query_cache_funct(void *arg) {
 
 
 void ProxySQL_Main_process_global_variables(int argc, const char **argv) {
+	GloVars.errorlog = NULL;
 	GloVars.parse(argc,argv);
 	GloVars.process_opts_pre();
 	GloVars.restart_on_missing_heartbeats = 10; // default
@@ -295,7 +807,7 @@ void ProxySQL_Main_process_global_variables(int argc, const char **argv) {
 	if (GloVars.confFile->OpenFile(GloVars.config_file) == true) {
 		GloVars.configfile_open=true;
 		proxy_info("Using config file %s\n", GloVars.config_file);
-		const Setting& root = GloVars.confFile->cfg->getRoot();
+		const Setting& root = GloVars.confFile->cfg.getRoot();
 		if (root.exists("restart_on_missing_heartbeats")==true) {
 			// restart_on_missing_heartbeats datadir from config file
 			int restart_on_missing_heartbeats;
@@ -314,6 +826,31 @@ void ProxySQL_Main_process_global_variables(int argc, const char **argv) {
 				GloVars.execute_on_exit_failure=strdup(execute_on_exit_failure.c_str());
 			}
 		}
+		if (root.exists("errorlog")==true) {
+			// restart_on_missing_heartbeats datadir from config file
+			string errorlog_path;
+			bool rc;
+			rc=root.lookupValue("errorlog", errorlog_path);
+			if (rc==true) {
+				GloVars.errorlog = strdup(errorlog_path.c_str());
+			}
+		}
+		if (root.exists("web_interface_plugin")==true) {
+			string web_interface_plugin;
+			bool rc;
+			rc=root.lookupValue("web_interface_plugin", web_interface_plugin);
+			if (rc==true) {
+				GloVars.web_interface_plugin=strdup(web_interface_plugin.c_str());
+			}
+		}
+		if (root.exists("ldap_auth_plugin")==true) {
+			string ldap_auth_plugin;
+			bool rc;
+			rc=root.lookupValue("ldap_auth_plugin", ldap_auth_plugin);
+			if (rc==true) {
+				GloVars.ldap_auth_plugin=strdup(ldap_auth_plugin.c_str());
+			}
+		}
 	} else {
 		proxy_warning("Unable to open config file %s\n", GloVars.config_file); // issue #705
 		if (GloVars.__cmd_proxysql_config_file) {
@@ -325,7 +862,7 @@ void ProxySQL_Main_process_global_variables(int argc, const char **argv) {
 	if (GloVars.__cmd_proxysql_datadir==NULL) {
 		// datadir was not specified , try to read config file
 		if (GloVars.configfile_open==true) {
-			const Setting& root = GloVars.confFile->cfg->getRoot();
+			const Setting& root = GloVars.confFile->cfg.getRoot();
 			if (root.exists("datadir")==true) {
 				// reading datadir from config file
 				std::string datadir;
@@ -367,11 +904,16 @@ void ProxySQL_Main_process_global_variables(int argc, const char **argv) {
 	GloVars.admindb=(char *)malloc(strlen(GloVars.datadir)+strlen((char *)"proxysql.db")+2);
 	sprintf(GloVars.admindb,"%s/%s",GloVars.datadir, (char *)"proxysql.db");
 
+	GloVars.sqlite3serverdb=(char *)malloc(strlen(GloVars.datadir)+strlen((char *)"sqlite3server.db")+2);
+	sprintf(GloVars.sqlite3serverdb,"%s/%s",GloVars.datadir, (char *)"sqlite3server.db");
+
 	GloVars.statsdb_disk=(char *)malloc(strlen(GloVars.datadir)+strlen((char *)"proxysql_stats.db")+2);
 	sprintf(GloVars.statsdb_disk,"%s/%s",GloVars.datadir, (char *)"proxysql_stats.db");
 
-	GloVars.errorlog=(char *)malloc(strlen(GloVars.datadir)+strlen((char *)"proxysql.log")+2);
-	sprintf(GloVars.errorlog,"%s/%s",GloVars.datadir, (char *)"proxysql.log");
+	if (GloVars.errorlog == NULL) {
+		GloVars.errorlog=(char *)malloc(strlen(GloVars.datadir)+strlen((char *)"proxysql.log")+2);
+		sprintf(GloVars.errorlog,"%s/%s",GloVars.datadir, (char *)"proxysql.log");
+	}
 
 	GloVars.pid=(char *)malloc(strlen(GloVars.datadir)+strlen((char *)"proxysql.pid")+2);
 	sprintf(GloVars.pid,"%s/%s",GloVars.datadir, (char *)"proxysql.pid");
@@ -392,15 +934,27 @@ void ProxySQL_Main_init_main_modules() {
 	GloQPro=NULL;
 	GloMTH=NULL;
 	GloMyAuth=NULL;
+	GloMyLdapAuth = NULL;
 #ifdef PROXYSQLCLICKHOUSE
 	GloClickHouseAuth=NULL;
 #endif /* PROXYSQLCLICKHOUSE */
 	GloMyMon=NULL;
 	GloMyLogger=NULL;
 	GloMyStmt=NULL;
+
+	// initialize libev
+	if (!ev_default_loop (EVBACKEND_POLL | EVFLAG_NOENV)) {
+		fprintf(stderr,"could not initialise libev");
+		exit(EXIT_FAILURE);
+	}
+
 	MyHGM=new MySQL_HostGroups_Manager();
-	GloMTH=new MySQL_Threads_Handler();
+	MyHGM->init();
+	MySQL_Threads_Handler * _tmp_GloMTH = NULL;
+	_tmp_GloMTH=new MySQL_Threads_Handler();
+	GloMTH = _tmp_GloMTH;
 	GloMyLogger = new MySQL_Logger();
+	GloMyLogger->print_version();
 	GloMyStmt=new MySQL_STMT_Manager_v14();
 }
 
@@ -416,18 +970,29 @@ void ProxySQL_Main_init_Admin_module() {
 	GloAdmin = new ProxySQL_Admin();
 	GloAdmin->init();
 	GloAdmin->print_version();
+	if (binary_sha1) {
+		proxy_info("ProxySQL SHA1 checksum: %s\n", binary_sha1);
+	}
 }
 
 void ProxySQL_Main_init_Auth_module() {
 	GloMyAuth = new MySQL_Authentication();
 	GloMyAuth->print_version();
 	GloAdmin->init_users();
+	//GloMyLdapAuth = create_MySQL_LDAP_Authentication();
+	if (GloMyLdapAuth) {
+		GloMyLdapAuth->print_version();
+	}
 }
 
 void ProxySQL_Main_init_Query_module() {
 	GloQPro = new Query_Processor();
-  GloQPro->print_version();
+	GloQPro->print_version();
 	GloAdmin->init_mysql_query_rules();
+	GloAdmin->init_mysql_firewall();
+//	if (GloWebInterface) {
+//		GloWebInterface->print_version();
+//	}
 }
 
 void ProxySQL_Main_init_MySQL_Threads_Handler_module() {
@@ -459,8 +1024,10 @@ void ProxySQL_Main_init_Query_Cache_module() {
 void ProxySQL_Main_init_MySQL_Monitor_module() {
 	// start MySQL_Monitor
 //	GloMyMon = new MySQL_Monitor();
-	MyMon_thread = new std::thread(&MySQL_Monitor::run,GloMyMon);
-	GloMyMon->print_version();
+	if (MyMon_thread == NULL) { // only if not created yet
+		MyMon_thread = new std::thread(&MySQL_Monitor::run,GloMyMon);
+		GloMyMon->print_version();
+	}
 }
 
 
@@ -609,6 +1176,7 @@ void ProxySQL_Main_shutdown_all_modules() {
 	}
 	{
 		cpu_timer t;
+		MyHGM->shutdown();
 		delete MyHGM;
 #ifdef DEBUG
 		std::cerr << "GloHGM shutdown in ";
@@ -642,23 +1210,96 @@ void ProxySQL_Main_init() {
 
 
 
+static void LoadPlugins() {
+	if (GloVars.web_interface_plugin) {
+		dlerror();
+		char * dlsym_error = NULL;
+		dlerror();
+		dlsym_error=NULL;
+		__web_interface = dlopen(GloVars.web_interface_plugin, RTLD_NOW);
+		if (!__web_interface) {
+			cerr << "Cannot load library: " << dlerror() << '\n';
+			exit(EXIT_FAILURE);
+		} else {
+			dlerror();
+			create_Web_Interface = (create_Web_Interface_t *) dlsym(__web_interface, "create_Web_Interface_func");
+			dlsym_error = dlerror();
+			if (dlsym_error!=NULL) {
+				cerr << "Cannot load symbol create_Web_Interface: " << dlsym_error << '\n';
+				exit(EXIT_FAILURE);
+			}
+		}
+		if (__web_interface==NULL || dlsym_error) {
+			proxy_error("Unable to load Web_Interface from %s\n", GloVars.web_interface_plugin);
+			exit(EXIT_FAILURE);
+		} else {
+			GloWebInterface = create_Web_Interface();
+			if (GloWebInterface) {
+				//GloAdmin->init_WebInterfacePlugin();
+				//GloAdmin->load_ldap_variables_to_runtime();
+			}
+		}
+	}
+	if (GloVars.ldap_auth_plugin) {
+		dlerror();
+		char * dlsym_error = NULL;
+		dlerror();
+		dlsym_error=NULL;
+		__mysql_ldap_auth = dlopen(GloVars.ldap_auth_plugin, RTLD_NOW);
+		if (!__mysql_ldap_auth) {
+			cerr << "Cannot load library: " << dlerror() << '\n';
+			exit(EXIT_FAILURE);
+		} else {
+			dlerror();
+			create_MySQL_LDAP_Authentication = (create_MySQL_LDAP_Authentication_t *) dlsym(__mysql_ldap_auth, "create_MySQL_LDAP_Authentication_func");
+			dlsym_error = dlerror();
+			if (dlsym_error!=NULL) {
+				cerr << "Cannot load symbol create_MySQL_LDAP_Authentication: " << dlsym_error << '\n';
+				exit(EXIT_FAILURE);
+			}
+		}
+		if (__mysql_ldap_auth==NULL || dlsym_error) {
+			proxy_error("Unable to load MySQL_LDAP_Authentication from %s\n", GloVars.ldap_auth_plugin);
+			exit(EXIT_FAILURE);
+		} else {
+			GloMyLdapAuth = create_MySQL_LDAP_Authentication();
+			// we are removing this from here, and copying in
+			//     ProxySQL_Main_init_phase2___not_started
+			// the keep record of these two lines to make sure we don't
+			// do a similar mistakes with other plugins
+			//
+			//if (GloMyLdapAuth) {
+			//	GloAdmin->init_ldap();
+			//	GloAdmin->load_ldap_variables_to_runtime();
+			//}
+		}
+	}
+}
 
 
 
 void ProxySQL_Main_init_phase2___not_started() {
+	LoadPlugins();
+
 	ProxySQL_Main_init_main_modules();
 	ProxySQL_Main_init_Admin_module();
 	GloMTH->print_version();
 
 	{
 		cpu_timer t;
-		GloMyLogger->set_datadir(GloVars.datadir);
+		GloMyLogger->events_set_datadir(GloVars.datadir);
+		GloMyLogger->audit_set_datadir(GloVars.datadir);
 #ifdef DEBUG
 		std::cerr << "Main phase3 : GloMyLogger initialized in ";
 #endif
 	}
 	if (GloVars.configfile_open) {
 		GloVars.confFile->CloseFile();
+	}
+
+	if (GloMyLdapAuth) {
+		GloAdmin->init_ldap();
+		GloAdmin->load_ldap_variables_to_runtime();
 	}
 
 	ProxySQL_Main_init_Auth_module();
@@ -673,7 +1314,8 @@ void ProxySQL_Main_init_phase3___start_all() {
 
 	{
 		cpu_timer t;
-		GloMyLogger->set_datadir(GloVars.datadir);
+		GloMyLogger->events_set_datadir(GloVars.datadir);
+		GloMyLogger->audit_set_datadir(GloVars.datadir);
 #ifdef DEBUG
 		std::cerr << "Main phase3 : GloMyLogger initialized in ";
 #endif
@@ -686,6 +1328,7 @@ void ProxySQL_Main_init_phase3___start_all() {
 		GloAdmin->init_mysql_servers();
 		GloAdmin->init_proxysql_servers();
 		GloAdmin->load_scheduler_to_runtime();
+		GloAdmin->proxysql_restapi().load_restapi_to_runtime();
 #ifdef DEBUG
 		std::cerr << "Main phase3 : GloAdmin initialized in ";
 #endif
@@ -722,6 +1365,14 @@ void ProxySQL_Main_init_phase3___start_all() {
 		std::cerr << "Main phase3 : MySQL Threads Handler listeners started in ";
 #endif
 	}
+	if ( GloVars.global.sqlite3_server == true ) {
+		cpu_timer t;
+		ProxySQL_Main_init_SQLite3Server();
+		sleep(1);
+#ifdef DEBUG
+		std::cerr << "Main phase3 : SQLite3 Server initialized in ";
+#endif
+	}
 	if (GloVars.global.monitor==true)
 		{
 			cpu_timer t;
@@ -730,13 +1381,6 @@ void ProxySQL_Main_init_phase3___start_all() {
 			std::cerr << "Main phase3 : MySQL Monitor initialized in ";
 #endif
 		}
-	if ( GloVars.global.sqlite3_server == true ) {
-		cpu_timer t;
-		ProxySQL_Main_init_SQLite3Server();
-#ifdef DEBUG
-		std::cerr << "Main phase3 : SQLite3 Server initialized in ";
-#endif
-	}
 #ifdef PROXYSQLCLICKHOUSE
 	if ( GloVars.global.clickhouse_server == true ) {
 		cpu_timer t;
@@ -746,6 +1390,11 @@ void ProxySQL_Main_init_phase3___start_all() {
 #endif
 	}
 #endif /* PROXYSQLCLICKHOUSE */
+
+	// LDAP
+	if (GloMyLdapAuth) {
+		GloAdmin->init_ldap_variables();
+	}
 }
 
 
@@ -805,14 +1454,19 @@ void ProxySQL_daemonize_wait_daemon() {
 
 bool ProxySQL_daemonize_phase2() {
 	int rc;
-	/* Close FDs */
+/*
+	// we DO NOT close FDs anymore. See:
+	// https://github.com/sysown/proxysql/issues/2628
+	//
+	// Close FDs
 	if (daemon_close_all(-1) < 0) {
 		daemon_log(LOG_ERR, "Failed to close all file descriptors: %s", strerror(errno));
 
-		/* Send the error condition to the parent process */
+		// Send the error condition to the parent process
 		daemon_retval_send(1);
 		return false;
 	}
+*/
 
 	rc=chdir(GloVars.datadir);
 	if (rc) {
@@ -833,7 +1487,6 @@ bool ProxySQL_daemonize_phase2() {
 	//daemon_log(LOG_INFO, "Sucessfully started");
 	proxy_info("Starting ProxySQL\n");
 	proxy_info("Sucessfully started\n");
-
 	return true;
 }
 
@@ -908,6 +1561,10 @@ bool ProxySQL_daemonize_phase3() {
 		//daemon_log(LOG_INFO, "ProxySQL crashed. Restarting!\n");
 		parent_open_error_log();
 		proxy_error("ProxySQL crashed. Restarting!\n");
+		proxy_info("ProxySQL version %s\n", PROXYSQL_VERSION);
+		if (binary_sha1) {
+			proxy_info("ProxySQL SHA1 checksum: %s\n", binary_sha1);
+		}
 		call_execute_on_exit_failure();
 		parent_close_error_log();
 		return false;
@@ -915,14 +1572,24 @@ bool ProxySQL_daemonize_phase3() {
 	return true;
 }
 
+void my_terminate(void) {
+	proxy_error("ProxySQL crashed due to exception\n");
+	print_backtrace();
+}
+
+namespace {
+	static const bool SET_TERMINATE = std::set_terminate(my_terminate);
+}
 
 int main(int argc, const char * argv[]) {
 
 	{
-		cpu_timer t;
+		MYSQL *my = mysql_init(NULL);
+		mysql_close(my);
+//		cpu_timer t;
 		ProxySQL_Main_init();
 #ifdef DEBUG
-		std::cerr << "Main init phase0 completed in ";
+//		std::cerr << "Main init phase0 completed in ";
 #endif
 	}
 	{
@@ -934,6 +1601,82 @@ int main(int argc, const char * argv[]) {
 #endif
 	}
 
+	struct rlimit nlimit;
+	{
+		int rc = getrlimit(RLIMIT_NOFILE, &nlimit);
+		if (rc == 0) {
+			if (nlimit.rlim_cur <= 1024) {
+				proxy_error("Current RLIMIT_NOFILE is very low: %d .  Tune RLIMIT_NOFILE correctly before running ProxySQL\n", nlimit.rlim_cur);
+				if (nlimit.rlim_max > nlimit.rlim_cur) {
+					if (nlimit.rlim_max >= 102400) {
+						nlimit.rlim_cur = 102400;
+					} else {
+						nlimit.rlim_cur = nlimit.rlim_max;
+					}
+					proxy_warning("Automatically setting RLIMIT_NOFILE to %d\n", nlimit.rlim_cur);
+					rc = setrlimit(RLIMIT_NOFILE, &nlimit);
+					if (rc) {
+						proxy_error("Unable to increase RLIMIT_NOFILE: %s: \n", strerror(errno));
+					}
+				} else {
+					proxy_error("Unable to increase RLIMIT_NOFILE because rlim_max is low: %d\n", nlimit.rlim_max);
+				}
+			}
+		} else {
+			proxy_error("Call to getrlimit failed: %s\n", strerror(errno));
+		}
+	}
+
+	{
+		cpu_timer t;
+		ProxySQL_Main_init_SSL_module();
+#ifdef DEBUG
+		std::cerr << "Main SSL init variables completed in ";
+#endif
+	}
+
+	{
+		cpu_timer t;
+		int fd = -1;
+		char buff[PATH_MAX+1];
+		ssize_t len = -1;
+#if defined(__FreeBSD__)
+		len = readlink("/proc/curproc/file", buff, sizeof(buff)-1);
+#else
+		len = readlink("/proc/self/exe", buff, sizeof(buff)-1);
+#endif
+		if (len != -1) {
+			buff[len] = '\0';
+			fd = open(buff, O_RDONLY);
+		}
+		if(fd >= 0) {
+			struct stat statbuf;
+			if(fstat(fd, &statbuf) == 0) {
+				unsigned char *fb = (unsigned char *)mmap(0, statbuf.st_size, PROT_READ, MAP_SHARED, fd, 0);
+				if (fb != MAP_FAILED) {
+					unsigned char temp[SHA_DIGEST_LENGTH];
+					SHA1(fb, statbuf.st_size, temp);
+					binary_sha1 = (char *)malloc(SHA_DIGEST_LENGTH*2+1);
+					memset(binary_sha1, 0, SHA_DIGEST_LENGTH*2+1);
+					char buf[SHA_DIGEST_LENGTH*2];
+					for (int i=0; i < SHA_DIGEST_LENGTH; i++) {
+						sprintf((char*)&(buf[i*2]), "%02x", temp[i]);
+					}
+					memcpy(binary_sha1, buf, SHA_DIGEST_LENGTH*2);
+					munmap(fb,statbuf.st_size);
+				} else {
+					proxy_error("Unable to mmap %s: %s\n", buff, strerror(errno));
+				}
+			} else {
+				proxy_error("Unable to fstat %s: %s\n", buff, strerror(errno));
+			}
+		} else {
+			proxy_error("Unable to open %s: %s\n", argv[0], strerror(errno));
+		}
+#ifdef DEBUG
+		std::cerr << "SHA1 generated in ";
+#endif
+	}
 	if (GloVars.global.foreground==false) {
 		{
 			cpu_timer t;
@@ -1033,6 +1776,16 @@ __start_label:
 #endif
 	}
 
+	if (GloVars.global.version_check) {
+		pthread_attr_t attr;
+		pthread_attr_init(&attr);
+		pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+		pthread_t thr;
+		if (pthread_create(&thr, &attr, main_check_latest_version_thread, NULL) !=0 ) {
+			perror("Thread creation");
+			exit(EXIT_FAILURE);
+		}
+	}
 	{
 		unsigned int missed_heartbeats = 0;
 		unsigned long long previous_time = monotonic_time();
@@ -1093,6 +1846,7 @@ __start_label:
 					if (missed_heartbeats >= (unsigned int)GloVars.restart_on_missing_heartbeats) {
 						if (GloVars.restart_on_missing_heartbeats) {
 							proxy_error("Watchdog: reached %u missed heartbeats. Aborting!\n", missed_heartbeats);
+							proxy_error("Watchdog: see details at https://github.com/sysown/proxysql/wiki/Watchdog\n");
 							assert(0);
 						}
 					}
@@ -1128,6 +1882,16 @@ finish:
 	daemon_pid_file_remove();
 
 //	l_mem_destroy(__thr_sfp);
+
+#ifdef RUNNING_ON_VALGRIND
+	if (RUNNING_ON_VALGRIND==0) {
+		if (__web_interface) {
+			dlclose(__web_interface);
+		}
+		if (__mysql_ldap_auth) {
+			dlclose(__mysql_ldap_auth);
+		}
+	}
+#endif
 	return 0;
 }
-

@@ -1,5 +1,6 @@
 #include "proxysql.h"
 #include "cpp.h"
+#include "MySQL_Data_Stream.h"
 
 void * MySQL_Backend::operator new(size_t size) {
 	return l_alloc(size);
@@ -14,6 +15,8 @@ MySQL_Backend::MySQL_Backend() {
 	server_myds=NULL;
 	server_bytes_at_cmd.bytes_recv=0;
 	server_bytes_at_cmd.bytes_sent=0;
+	memset(gtid_uuid,0,sizeof(gtid_uuid));
+	gtid_trxid=0;
 }
 
 MySQL_Backend::~MySQL_Backend() {
@@ -26,12 +29,13 @@ void MySQL_Backend::reset() {
 			server_myds->myconn->last_time_used=server_myds->sess->thread->curtime;
 			server_myds->return_MySQL_Connection_To_Pool();
 		} else {
-			server_myds->destroy_MySQL_Connection_From_Pool(true);
+			if (server_myds->sess && server_myds->sess->session_fast_forward == false) {
+				server_myds->destroy_MySQL_Connection_From_Pool(true);
+			} else {
+				server_myds->destroy_MySQL_Connection_From_Pool(false);
+			}
 		}
 	};
-	//if (mshge) {
-		// FIXME: what to do with it?
-	//}
 	if (server_myds) {
 		delete server_myds;
 	}

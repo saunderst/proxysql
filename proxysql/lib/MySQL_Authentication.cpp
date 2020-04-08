@@ -2,6 +2,9 @@
 #include "proxysql.h"
 #include "cpp.h"
 #include "proxysql_atomic.h"
+
+#include "MySQL_Authentication.hpp"
+
 #include "SpookyV2.h"
 
 MySQL_Authentication::MySQL_Authentication() {
@@ -10,7 +13,7 @@ MySQL_Authentication::MySQL_Authentication() {
 #else
 	if (glovars.has_debug==true) {
 #endif /* DEBUG */
-		perror("Incompatible debagging version");
+		perror("Incompatible debugging version");
 		exit(EXIT_FAILURE);
 	}
 #ifdef PROXYSQL_AUTH_PTHREAD_MUTEX
@@ -76,7 +79,7 @@ __loop_remove_inactives:
 #endif
 }
 
-bool MySQL_Authentication::add(char * username, char * password, enum cred_username_type usertype, bool use_ssl, int default_hostgroup, char *default_schema, bool schema_locked, bool transaction_persistent, bool fast_forward, int max_connections) {
+bool MySQL_Authentication::add(char * username, char * password, enum cred_username_type usertype, bool use_ssl, int default_hostgroup, char *default_schema, bool schema_locked, bool transaction_persistent, bool fast_forward, int max_connections, char *comment) {
 	uint64_t hash1, hash2;
 	SpookyHash myhash;
 	myhash.Init(1,2);
@@ -109,10 +112,15 @@ bool MySQL_Authentication::add(char * username, char * password, enum cred_usern
 			free(ad->default_schema);
 			ad->default_schema=strdup(default_schema);
 		}
+		if (strcmp(ad->comment,comment)) {
+			free(ad->comment);
+			ad->comment=strdup(comment);
+		}
   } else {
 		ad=(account_details_t *)malloc(sizeof(account_details_t));
 		ad->username=strdup(username);
 		ad->default_schema=strdup(default_schema);
+		ad->comment=strdup(comment);
 		ad->password=strdup(password);
 		new_ad=true;
 		ad->sha1_pass=NULL;
@@ -156,6 +164,7 @@ unsigned int MySQL_Authentication::memory_usage() {
 		if (ado->password) ret += strlen(ado->password) + 1;
 		if (ado->sha1_pass) ret += SHA_DIGEST_LENGTH;
 		if (ado->default_schema) ret += strlen(ado->default_schema) + 1;
+		if (ado->comment) ret += strlen(ado->comment) + 1;
 	}
 	ret += sizeof(creds_group_t);
 	ret += sizeof(PtrArray);
@@ -167,6 +176,7 @@ unsigned int MySQL_Authentication::memory_usage() {
 		if (ado->password) ret += strlen(ado->password) + 1;
 		if (ado->sha1_pass) ret += SHA_DIGEST_LENGTH;
 		if (ado->default_schema) ret += strlen(ado->default_schema) + 1;
+		if (ado->comment) ret += strlen(ado->comment) + 1;
 	}
 	ret += sizeof(creds_group_t);
 	ret += sizeof(PtrArray);
@@ -208,6 +218,7 @@ int MySQL_Authentication::dump_all_users(account_details_t ***ads, bool _complet
 		if (_complete==false) {
 			ad->password=NULL;
 			ad->default_schema=NULL;
+			ad->comment=NULL;
 			ad->num_connections_used=ado->num_connections_used;
 		} else {
 			ad->num_connections_used=ado->num_connections_used;
@@ -216,6 +227,7 @@ int MySQL_Authentication::dump_all_users(account_details_t ***ads, bool _complet
 			ad->sha1_pass=NULL;
 			ad->use_ssl=ado->use_ssl;
 			ad->default_schema=strdup(ado->default_schema);
+			ad->comment=strdup(ado->comment);
 			ad->schema_locked=ado->schema_locked;
 			ad->transaction_persistent=ado->transaction_persistent;
 			ad->fast_forward=ado->fast_forward;
@@ -236,6 +248,7 @@ int MySQL_Authentication::dump_all_users(account_details_t ***ads, bool _complet
 		ad->use_ssl=ado->use_ssl;
 		ad->default_hostgroup=ado->default_hostgroup;
 		ad->default_schema=strdup(ado->default_schema);
+		ad->comment=strdup(ado->comment);
 		ad->schema_locked=ado->schema_locked;
 		ad->transaction_persistent=ado->transaction_persistent;
 		ad->fast_forward=ado->fast_forward;
@@ -348,6 +361,7 @@ bool MySQL_Authentication::del(char * username, enum cred_username_type usertype
 		free(ad->password);
 		if (ad->sha1_pass) { free(ad->sha1_pass); ad->sha1_pass=NULL; }
 		free(ad->default_schema);
+		free(ad->comment);
 		free(ad);
 		ret=true;
 	}
@@ -394,6 +408,25 @@ bool MySQL_Authentication::set_SHA1(char * username, enum cred_username_type use
 #endif
 	return ret;
 };
+
+bool MySQL_Authentication::exists(char * username) {
+	bool ret = false;
+	uint64_t hash1, hash2;
+	SpookyHash myhash;
+	myhash.Init(1,2);
+	myhash.Update(username,strlen(username));
+	myhash.Final(&hash1,&hash2);
+
+	creds_group_t &cg = creds_frontends ;
+	pthread_rwlock_rdlock(&cg.lock);
+	std::map<uint64_t, account_details_t *>::iterator lookup;
+	lookup = cg.bt_map.find(hash1);
+	if (lookup != cg.bt_map.end()) {
+		ret = true;
+	}
+	pthread_rwlock_unlock(&cg.lock);
+	return ret;
+}
 
 char * MySQL_Authentication::lookup(char * username, enum cred_username_type usertype, bool *use_ssl, int *default_hostgroup, char **default_schema, bool *schema_locked, bool *transaction_persistent, bool *fast_forward, int *max_connections, void **sha1_pass) {
 	char *ret=NULL;
@@ -452,11 +485,12 @@ bool MySQL_Authentication::_reset(enum cred_username_type usertype) {
 		lookup = cg.bt_map.begin();
 		if ( lookup != cg.bt_map.end() ) {
 			account_details_t *ad=lookup->second;
-     	cg.bt_map.erase(lookup);
+			cg.bt_map.erase(lookup);
 			free(ad->username);
 			free(ad->password);
 			if (ad->sha1_pass) { free(ad->sha1_pass); ad->sha1_pass=NULL; }
 			free(ad->default_schema);
+			free(ad->comment);
 			free(ad);
 		}
 	}
@@ -499,7 +533,10 @@ uint64_t MySQL_Authentication::_get_runtime_checksum(enum cred_username_type use
 			myhash.Update(&ad->max_connections,sizeof(ad->max_connections));
 			myhash.Update(ad->username,strlen(ad->username));
 			myhash.Update(ad->password,strlen(ad->password));
-			myhash.Update(ad->default_schema,strlen(ad->default_schema));
+			if (ad->default_schema)
+				myhash.Update(ad->default_schema,strlen(ad->default_schema));
+			if (ad->comment)
+				myhash.Update(ad->comment,strlen(ad->comment));
 		}
 		it++;
 	}

@@ -14,6 +14,13 @@
 #define STATUS_MYSQL_CONNECTION_NO_MULTIPLEX         0x00000080
 #define STATUS_MYSQL_CONNECTION_SQL_LOG_BIN0         0x00000100
 #define STATUS_MYSQL_CONNECTION_FOUND_ROWS           0x00000200
+#define STATUS_MYSQL_CONNECTION_NO_BACKSLASH_ESCAPES 0x00000400
+
+enum charset_action {
+	UNKNOWN,
+	NAMES,
+	CHARSET
+};
 
 class MySQL_Connection_userinfo {
 	private:
@@ -24,6 +31,7 @@ class MySQL_Connection_userinfo {
 	char *password;
 	char *schemaname;
 	char *sha1_pass;
+	char *fe_username;
 	MySQL_Connection_userinfo();
 	~MySQL_Connection_userinfo();
 	void set(char *, char *, char *, char *);
@@ -42,16 +50,56 @@ class MySQL_Connection {
 		char *time_zone;
 		uint32_t sql_mode_int;
 		uint32_t time_zone_int;
+		uint32_t character_set_results_int;
+		uint32_t isolation_level_int;
+		uint32_t transaction_read_int;
+		uint32_t tx_isolation_int;
+		uint32_t session_track_gtids_int;
+		uint32_t sql_auto_is_null_int;
+		uint32_t sql_select_limit_int;
+		uint32_t sql_safe_updates_int;
+		uint32_t collation_connection_int;
+		uint32_t net_write_timeout_int;
+		uint32_t max_join_size_int;
 		uint32_t max_allowed_pkt;
 		uint32_t server_capabilities;
+		uint32_t client_flag;
 		unsigned int compression_min_length;
 		char *init_connect;
 		bool init_connect_sent;
+		char * character_set_results;
+		char * isolation_level;
+		char * transaction_read;
+		char * tx_isolation;
+		char * session_track_gtids;
+		char * sql_auto_is_null;
+		char * sql_select_limit;
+		char * sql_safe_updates;
+		char * collation_connection;
+		char * net_write_timeout;
+		char * max_join_size;
+		bool isolation_level_sent;
+		bool tx_isolation_sent;
+		bool transaction_read_sent;
+		bool character_set_results_sent;
+		bool session_track_gtids_sent;
+		bool sql_auto_is_null_sent;
+		bool sql_select_limit_sent;
+		bool sql_safe_updates_sent;
+		bool collation_connection_sent;
+		bool net_write_timeout_sent;
+		bool max_join_size_sent;
+		bool sql_mode_sent;
+		char *ldap_user_variable;
+		char *ldap_user_variable_value;
+		bool ldap_user_variable_sent;
 		uint8_t protocol_version;
-		uint8_t charset;
+		unsigned int charset;
+		enum charset_action charset_action;
 		uint8_t sql_log_bin;
 		int8_t last_set_autocommit;
 		bool autocommit;
+		bool no_backslash_escapes;
 	} options;
 	struct {
 		unsigned long length;
@@ -64,6 +112,7 @@ class MySQL_Connection {
 	unsigned long long creation_time;
 	unsigned long long last_time_used;
 	unsigned long long timeout;
+	int auto_increment_delay_token;
 	int fd;
 	MySQL_STMTs_local_v14 *local_stmts;	// local view of prepared statements
 	MYSQL *mysql;
@@ -71,10 +120,19 @@ class MySQL_Connection {
 	MYSQL_RES *mysql_result;
 	MYSQL_ROW mysql_row;
 	MySQL_ResultSet *MyRS;
+	MySQL_ResultSet *MyRS_reuse;
 	MySrvC *parent;
 	MySQL_Connection_userinfo *userinfo;
 	MySQL_Data_Stream *myds;
 	enum MySerStatus server_status; // this to solve a side effect of #774
+
+	bytes_stats_t bytes_info; // bytes statistics
+	struct {
+		unsigned long long questions;
+		unsigned long long myconnpoll_get;
+		unsigned long long myconnpoll_put;
+	} statuses;
+
 	unsigned long largest_query_length;
 	uint32_t status_flags;
 	int async_exit_status; // exit status of MariaDB Client Library Non blocking API
@@ -93,16 +151,19 @@ class MySQL_Connection {
 	bool multiplex_delayed;
 	bool unknown_transaction_status;
 	void compute_unknown_transaction_status();
+	char gtid_uuid[128];
 	MySQL_Connection();
 	~MySQL_Connection();
 	bool set_autocommit(bool);
-	uint8_t set_charset(uint8_t);
+	bool set_no_backslash_escapes(bool);
+	unsigned int set_charset(unsigned int, enum charset_action);
 
 	void set_status_transaction(bool);
 	void set_status_compression(bool);
 	void set_status_get_lock(bool);
 	void set_status_lock_tables(bool);
 	void set_status_temporary_table(bool);
+	void set_status_no_backslash_escapes(bool);
 	void set_status_prepared_statement(bool);
 	void set_status_user_variable(bool);
 	void set_status_no_multiplex(bool);
@@ -113,6 +174,7 @@ class MySQL_Connection {
 	bool get_status_get_lock();
 	bool get_status_lock_tables();
 	bool get_status_temporary_table();
+	bool get_status_no_backslash_escapes();
 	bool get_status_prepared_statement();
 	bool get_status_user_variable();
 	bool get_status_no_multiplex();
@@ -134,6 +196,8 @@ class MySQL_Connection {
 	void store_result_cont(short event);
 	void initdb_start();
 	void initdb_cont(short event);
+	void set_option_start();
+	void set_option_cont(short event);
 	void set_query(char *stmt, unsigned long length);
 	MDB_ASYNC_ST handler(short event);
 	void next_event(MDB_ASYNC_ST new_st);
@@ -142,10 +206,11 @@ class MySQL_Connection {
 	int async_change_user(short event);
 	int async_select_db(short event);
 	int async_set_autocommit(short event, bool);
-	int async_set_names(short event, uint8_t nr);
+	int async_set_names(short event, unsigned int nr);
 	int async_send_simple_command(short event, char *stmt, unsigned long length); // no result set expected
 	int async_query(short event, char *stmt, unsigned long length, MYSQL_STMT **_stmt=NULL, stmt_execute_metadata_t *_stmt_meta=NULL);
 	int async_ping(short event);
+	int async_set_option(short event, bool mask);
 
 	void stmt_prepare_start();
 	void stmt_prepare_cont(short event);
@@ -169,6 +234,7 @@ class MySQL_Connection {
 	bool IsServerOffline();
 	bool IsAutoCommit();
 	bool MultiplexDisabled();
+	bool IsKeepMultiplexEnabledVariables(char *query_digest_text);
 	void ProcessQueryAndSetStatusFlags(char *query_digest_text);
 	void optimize();
 	void close_mysql();
@@ -176,5 +242,11 @@ class MySQL_Connection {
 	void set_is_client(); // used for local_stmts
 
 	void reset();
+
+	bool get_gtid(char *buff, uint64_t *trx_id);
+	void reduce_auto_increment_delay_token() { if (auto_increment_delay_token) auto_increment_delay_token--; };
+
+	bool match_tracked_options(MySQL_Connection *c);
+	unsigned long get_mysql_thread_id() { return mysql ? mysql->thread_id : 0; }
 };
 #endif /* __CLASS_MYSQL_CONNECTION_H */

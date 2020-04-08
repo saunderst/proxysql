@@ -38,6 +38,10 @@ ProxySQL_GlobalVariables::~ProxySQL_GlobalVariables() {
 		free(execute_on_exit_failure);
 		execute_on_exit_failure = NULL;
 	}
+	if (ldap_auth_plugin) {
+		free(ldap_auth_plugin);
+		ldap_auth_plugin = NULL;
+	}
 };
 
 ProxySQL_GlobalVariables::ProxySQL_GlobalVariables() {
@@ -56,7 +60,7 @@ ProxySQL_GlobalVariables::ProxySQL_GlobalVariables() {
 	statuses.stack_memory_admin_threads = 0;
 	statuses.stack_memory_cluster_threads = 0;
 
-
+	global.version_check = true;
 	global.gdbg=false;
 	global.nostart=false;
 	global.foreground=false;
@@ -75,6 +79,7 @@ ProxySQL_GlobalVariables::ProxySQL_GlobalVariables() {
 	checksums_values.dumped_at = 0;
 	checksums_values.global_checksum = 0;
 	execute_on_exit_failure = NULL;
+	ldap_auth_plugin = NULL;
 #ifdef DEBUG
 	global.gdb=0;
 #endif
@@ -87,7 +92,7 @@ ProxySQL_GlobalVariables::ProxySQL_GlobalVariables() {
 	opt->overview="High Performance Advanced Proxy for MySQL";
 	opt->syntax="proxysql [OPTIONS]";
 	std::string s = "\n\nProxySQL " ;
-	s = s + "rev. " + PROXYSQL_VERSION + " -- " + __TIMESTAMP__ + "\nCopyright (C) 2013-2018 ProxySQL LLC\nThis program is free and without warranty\n";
+	s = s + "rev. " + PROXYSQL_VERSION + " -- " + __TIMESTAMP__ + "\nCopyright (C) 2013-2019 ProxySQL LLC\nThis program is free and without warranty\n";
 	opt->footer =s.c_str();
 
 	opt->add((const char *)"",0,0,0,(const char *)"Display usage instructions.",(const char *)"-h",(const char *)"-help",(const char *)"--help",(const char *)"--usage");
@@ -102,13 +107,14 @@ ProxySQL_GlobalVariables::ProxySQL_GlobalVariables() {
 	opt->add((const char *)"",0,0,0,(const char *)"Use SO_REUSEPORT",(const char *)"-r",(const char *)"--reuseport");
 #endif /* SO_REUSEPORT */
 	opt->add((const char *)"",0,0,0,(const char *)"Do not restart ProxySQL if crashes",(const char *)"-e",(const char *)"--exit-on-error");
-	opt->add((const char *)"~/proxysql.cnf",0,1,0,(const char *)"Configuraton file",(const char *)"-c",(const char *)"--config");
+	opt->add((const char *)"~/proxysql.cnf",0,1,0,(const char *)"Configuration file",(const char *)"-c",(const char *)"--config");
 	opt->add((const char *)"",0,1,0,(const char *)"Datadir",(const char *)"-D",(const char *)"--datadir");
 	opt->add((const char *)"",0,0,0,(const char *)"Rename/empty database file",(const char *)"--initial");
 	opt->add((const char *)"",0,0,0,(const char *)"Merge config file into database file",(const char *)"--reload");
 #ifdef IDLE_THREADS
 	opt->add((const char *)"",0,0,0,(const char *)"Create auxiliary threads to handle idle connections",(const char *)"--idle-threads");
 #endif /* IDLE_THREADS */
+	opt->add((const char *)"",0,0,0,(const char *)"Do not check for the latest version of ProxySQL",(const char *)"--no-version-check");
 	opt->add((const char *)"",0,1,0,(const char *)"Administration Unix Socket",(const char *)"-S",(const char *)"--admin-socket");
 
 	opt->add((const char *)"",0,0,0,(const char *)"Enable SQLite3 Server",(const char *)"--sqlite3-server");
@@ -139,7 +145,7 @@ void ProxySQL_GlobalVariables::process_opts_pre() {
 	}
 
 	if (opt->isSet("-V")) {
-		fprintf(stderr,"ProxySQL version %s, codename %s\n", PROXYSQL_VERSION, PROXYSQL_CODENAME);
+		fprintf(stdout,"ProxySQL version %s, codename %s\n", PROXYSQL_VERSION, PROXYSQL_CODENAME);
 		exit(EXIT_SUCCESS);
 	}
 
@@ -183,6 +189,10 @@ void ProxySQL_GlobalVariables::process_opts_pre() {
 	}
 #endif /* IDLE_THREADS */
 
+	if (opt->isSet("--no-version-check")) {
+		global.version_check=false;
+		glovars.version_check=false;
+	}
 	if (opt->isSet("--sqlite3-server")) {
 		global.sqlite3_server=true;
 	}

@@ -3,6 +3,8 @@
 
 #include "SpookyV2.h"
 
+#include "MySQL_PreparedStatement.h"
+
 //extern MySQL_STMT_Manager *GloMyStmt;
 //static uint32_t add_prepared_statement_calls = 0;
 //static uint32_t find_prepared_statement_by_hash_calls = 0;
@@ -163,18 +165,87 @@ MySQL_STMT_Global_info::MySQL_STMT_Global_info(uint64_t id, unsigned int h,
 	   // Query_Info::is_select_NOT_for_update()
 		if (ql >= 7) {
 			if (strncasecmp(q, (char *)"SELECT ", 7) == 0) {  // is a SELECT
-				is_select_NOT_for_update = true;
 				if (ql >= 17) {
-					char *p = (char *)q;
+					char *p = q;
 					p += ql - 11;
-					if (strncasecmp(p, " FOR UPDATE", 11) ==
-					    0) {  // is a SELECT FOR UPDATE
-						is_select_NOT_for_update = false;
+					if (strncasecmp(p, " FOR UPDATE", 11) == 0) {  // is a SELECT FOR UPDATE
+						__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+						goto __exit_MySQL_STMT_Global_info___search_select;
+					}
+					p = q;
+					p += ql-10;
+					if (strncasecmp(p, " FOR SHARE", 10) == 0) {  // is a SELECT FOR SHARE
+						__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+						goto __exit_MySQL_STMT_Global_info___search_select;
+					}
+					if (ql >= 25) {
+						p = q;
+						p += ql-19;
+						if (strncasecmp(p, " LOCK IN SHARE MODE", 19) == 0) {  // is a SELECT LOCK IN SHARE MODE
+							__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+							goto __exit_MySQL_STMT_Global_info___search_select;
+						}
+						p = q;
+						p += ql-7;
+						if (strncasecmp(p," NOWAIT",7)==0) {
+							// let simplify. If NOWAIT is used, we assume FOR UPDATE|SHARE is used
+							__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+							goto __exit_MySQL_STMT_Global_info___search_select;
+/*
+							if (strcasestr(q," FOR UPDATE ")) {
+								__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+								goto __exit_MySQL_STMT_Global_info___search_select;
+							}
+							if (strcasestr(q," FOR SHARE ")) {
+								__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+								goto __exit_MySQL_STMT_Global_info___search_select;
+							}
+*/
+						}
+						p = q;
+						p += ql-12;
+						if (strncasecmp(p," SKIP LOCKED",12)==0) {
+							// let simplify. If SKIP LOCKED is used, we assume FOR UPDATE|SHARE is used
+							__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+							goto __exit_MySQL_STMT_Global_info___search_select;
+/*
+							if (strcasestr(q," FOR UPDATE ")==NULL) {
+								__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+								goto __exit_MySQL_STMT_Global_info___search_select;
+							}
+							if (strcasestr(q," FOR SHARE ")==NULL) {
+								__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+								goto __exit_MySQL_STMT_Global_info___search_select;
+							}
+*/
+						}
+						p=q;
+						char buf[129];
+						if (ql>=128) { // for long query, just check the last 128 bytes
+							p+=ql-128;
+							memcpy(buf,p,128);
+							buf[128]=0;
+						} else {
+							memcpy(buf,p,ql);
+							buf[ql]=0;
+						}
+						if (strcasestr(buf," FOR ")) {
+							if (strcasestr(buf," FOR UPDATE ")) {
+								__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+								goto __exit_MySQL_STMT_Global_info___search_select;
+							}
+							if (strcasestr(buf," FOR SHARE ")) {
+								__sync_fetch_and_add(&MyHGM->status.select_for_update_or_equivalent, 1);
+								goto __exit_MySQL_STMT_Global_info___search_select;
+							}
+						}
 					}
 				}
+				is_select_NOT_for_update = true;
 			}
 		}
 	}
+__exit_MySQL_STMT_Global_info___search_select:
 
 	// set default properties:
 	properties.cache_ttl = -1;
@@ -537,8 +608,8 @@ void MySQL_STMT_Manager_v14::ref_count_client(uint64_t _stmt_id ,int _v, bool lo
 				    (uint64_t *)malloc(max_purge * sizeof(uint64_t));
 				for (std::map<uint64_t, MySQL_STMT_Global_info *>::iterator it =
 				         map_stmt_id_to_info.begin();
-				     it != map_stmt_id_to_info.end(); ++it) {
-					if ( (i == (max_purge - 1)) || (i == (num_client_count_zero - 1)) ) {
+					it != map_stmt_id_to_info.end(); ++it) {
+					if ( (i == (max_purge - 1)) || (i == ((int)num_client_count_zero - 1)) ) {
 						break; // nothing left to clean up
 					}
 					MySQL_STMT_Global_info *a = it->second;
@@ -729,7 +800,7 @@ bool MySQL_STMTs_local_v14::client_close(uint32_t client_statement_id) {
 		uint64_t global_stmt_id = s->second;
 		client_stmt_to_global_ids.erase(s);
 		GloMyStmt->ref_count_client(global_stmt_id, -1);
-		auto s2 = global_stmt_to_client_ids.find(global_stmt_id);
+		//auto s2 = global_stmt_to_client_ids.find(global_stmt_id);
 		std::pair<std::multimap<uint64_t,uint32_t>::iterator, std::multimap<uint64_t,uint32_t>::iterator> ret;
 		ret = global_stmt_to_client_ids.equal_range(global_stmt_id);
 		for (std::multimap<uint64_t,uint32_t>::iterator it=ret.first; it!=ret.second; ++it) {
@@ -816,12 +887,14 @@ MySQL_STMT_Global_info *MySQL_STMT_Manager_v14::add_prepared_statement(
 void MySQL_STMT_Manager_v14::get_metrics(uint64_t *c_unique, uint64_t *c_total,
                              uint64_t *stmt_max_stmt_id, uint64_t *cached,
                              uint64_t *s_unique, uint64_t *s_total) {
+#ifdef DEBUG
 	uint64_t c_u = 0;
 	uint64_t c_t = 0;
 	uint64_t m = 0;
 	uint64_t c = 0;
 	uint64_t s_u = 0;
 	uint64_t s_t = 0;
+#endif
 	pthread_rwlock_wrlock(&rwlock_);
 	statuses.cached = map_stmt_id_to_info.size();
 	statuses.c_unique = statuses.cached - num_stmt_with_ref_client_count_zero;
@@ -870,7 +943,7 @@ class PS_global_stats {
 	unsigned long long ref_count_client;
 	unsigned long long ref_count_server;
 	char *query;
-	PS_global_stats(uint64_t stmt_id, unsigned int h, char *u, char *s, uint64_t d, char *q, unsigned long long ref_c, unsigned long long ref_s) {
+	PS_global_stats(uint64_t stmt_id, unsigned int h, char *s, char *u, uint64_t d, char *q, unsigned long long ref_c, unsigned long long ref_s) {
 		statement_id = stmt_id;
 		hid=h;
 		digest=d;
@@ -897,7 +970,7 @@ class PS_global_stats {
 	char **get_row() {
 		char buf[128];
 		char **pta=(char **)malloc(sizeof(char *)*8);
-		sprintf(buf,"%llu",statement_id);
+		sprintf(buf,"%lu",statement_id);
 		pta[0]=strdup(buf);
 		sprintf(buf,"%u",hid);
 		pta[1]=strdup(buf);

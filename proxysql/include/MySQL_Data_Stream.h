@@ -4,8 +4,10 @@
 #include "proxysql.h"
 #include "cpp.h"
 
+#include "MySQL_Protocol.h"
 
 #define QUEUE_T_DEFAULT_SIZE	32768
+#define MY_SSL_BUFFER	8192
 
 typedef struct _queue_t {
 	void *buffer;
@@ -25,10 +27,12 @@ class MyDS_real_query {
 	char *QueryPtr;	// pointer to beginning of the query
 	unsigned int QuerySize;	// size of the query
 	void init(PtrSize_t *_pkt) {
+/*
 		assert(QueryPtr==NULL);
 		assert(QuerySize==0);
 		assert(pkt.ptr==NULL);
 		assert(pkt.size==0);
+*/
 		pkt.ptr=_pkt->ptr;
 		pkt.size=_pkt->size;
 		QueryPtr=(char *)pkt.ptr+5;
@@ -43,12 +47,16 @@ class MyDS_real_query {
 	}
 };
 
+enum sslstatus { SSLSTATUS_OK, SSLSTATUS_WANT_IO, SSLSTATUS_FAIL};
+
 class MySQL_Data_Stream
 {
 	private:
 	int array2buffer();
 	int buffer2array();
 	void generate_compressed_packet();
+	enum sslstatus do_ssl_handshake();
+	void queue_encrypted_bytes(const char *buf, size_t len);
 	public:
 	void * operator new(size_t);
 	void operator delete(void *);
@@ -77,6 +85,12 @@ class MySQL_Data_Stream
 	unsigned long long wait_until;
 	unsigned long long killed_at;
 	unsigned long long max_connect_time;
+	
+	struct {
+		unsigned long long questions;
+		unsigned long long myconnpoll_get;
+		unsigned long long myconnpoll_put;
+	} statuses;
 
 	PtrSizeArray *PSarrayIN;
 	PtrSizeArray *PSarrayOUT;
@@ -90,6 +104,10 @@ class MySQL_Data_Stream
 	MySQL_Session *sess;  // pointer to the session using this data stream
 	MySQL_Backend *mybe;  // if this is a connection to a mysql server, this points to a backend structure
 	SSL *ssl;
+	BIO *rbio_ssl;
+	BIO *wbio_ssl;
+	char *ssl_write_buf;
+	size_t ssl_write_len;
 	struct sockaddr *client_addr;
 
 	struct {
@@ -117,12 +135,21 @@ class MySQL_Data_Stream
 	int active; // data stream is active. If not, shutdown+close needs to be called
 	int status; // status . FIXME: make it a ORable variable
 
+	int switching_auth_stage;
+	int switching_auth_type;
+	unsigned int tmp_charset;
+
 	short revents;
+
+	char kill_type;
 
 	bool encrypted;
 	bool net_failure;
 
 	uint8_t pkt_sid;
+
+	bool com_field_list;
+	char *com_field_wild;
 
 	MySQL_Data_Stream();
 	~MySQL_Data_Stream();
@@ -163,28 +190,28 @@ class MySQL_Data_Stream
 
 	// safe way to attach a MySQL Connection
 	void attach_connection(MySQL_Connection *mc) {
+		statuses.myconnpoll_get++;
 		myconn=mc;
+		myconn->statuses.myconnpoll_get++;
 		mc->myds=this;
 	}
 
 	// safe way to detach a MySQL Connection
 	void detach_connection() {
 		assert(myconn);
+		myconn->statuses.myconnpoll_put++;
+		statuses.myconnpoll_put++;
 		myconn->myds=NULL;
 		myconn=NULL;
 	}
 
 	void return_MySQL_Connection_To_Pool();
 	
-	void destroy_MySQL_Connection_From_Pool(bool sq) {
-		MySQL_Connection *mc=myconn;
-		detach_connection();
-		unplug_backend();
-		mc->send_quit=sq;
-		MyHGM->destroy_MyConn_from_pool(mc);
-	}
+	void destroy_MySQL_Connection_From_Pool(bool sq);
 	void free_mysql_real_query();	
 	void reinit_queues();
 	void destroy_queues();
+
+	bool data_in_rbio();
 };
 #endif /* __CLASS_MYSQL_DATA_STREAM_H */

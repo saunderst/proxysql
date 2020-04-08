@@ -10,8 +10,33 @@
 #ifndef PROXYSQL_ENUMS
 #define PROXYSQL_ENUMS
 
+enum MySerStatus {
+	MYSQL_SERVER_STATUS_ONLINE,
+	MYSQL_SERVER_STATUS_SHUNNED,
+	MYSQL_SERVER_STATUS_OFFLINE_SOFT,
+	MYSQL_SERVER_STATUS_OFFLINE_HARD,
+	MYSQL_SERVER_STATUS_SHUNNED_REPLICATION_LAG
+};
+
 enum log_event_type {
-	PROXYSQL_QUERY
+	PROXYSQL_COM_QUERY,
+	PROXYSQL_MYSQL_AUTH_OK,
+	PROXYSQL_MYSQL_AUTH_ERR,
+	PROXYSQL_MYSQL_AUTH_CLOSE,
+	PROXYSQL_MYSQL_AUTH_QUIT,
+	PROXYSQL_MYSQL_CHANGE_USER_OK,
+	PROXYSQL_MYSQL_CHANGE_USER_ERR,
+	PROXYSQL_MYSQL_INITDB,
+	PROXYSQL_ADMIN_AUTH_OK,
+	PROXYSQL_ADMIN_AUTH_ERR,
+	PROXYSQL_ADMIN_AUTH_CLOSE,
+	PROXYSQL_ADMIN_AUTH_QUIT,
+	PROXYSQL_SQLITE_AUTH_OK,
+	PROXYSQL_SQLITE_AUTH_ERR,
+	PROXYSQL_SQLITE_AUTH_CLOSE,
+	PROXYSQL_SQLITE_AUTH_QUIT,
+	PROXYSQL_COM_STMT_EXECUTE,
+	PROXYSQL_COM_STMT_PREPARE
 };
 
 enum cred_username_type { USERNAME_BACKEND, USERNAME_FRONTEND };
@@ -28,6 +53,7 @@ enum MDB_ASYNC_ST { // MariaDB Async State Machine
 	ASYNC_CHANGE_USER_END,
 	ASYNC_CHANGE_USER_SUCCESSFUL,
 	ASYNC_CHANGE_USER_FAILED,
+	ASYNC_CHANGE_USER_TIMEOUT,
 	ASYNC_PING_START,
 	ASYNC_PING_CONT,
 	ASYNC_PING_END,
@@ -59,6 +85,11 @@ enum MDB_ASYNC_ST { // MariaDB Async State Machine
 	ASYNC_INITDB_END,
 	ASYNC_INITDB_SUCCESSFUL,
 	ASYNC_INITDB_FAILED,
+	ASYNC_SET_OPTION_START,
+	ASYNC_SET_OPTION_CONT,
+	ASYNC_SET_OPTION_END,
+	ASYNC_SET_OPTION_FAILED,
+	ASYNC_SET_OPTION_SUCCESSFUL,
 	ASYNC_STMT_PREPARE_START,
 	ASYNC_STMT_PREPARE_CONT,
 	ASYNC_STMT_PREPARE_END,
@@ -118,19 +149,35 @@ enum MySQL_DS_type {
 enum session_status {
 	CONNECTING_CLIENT,
 	CONNECTING_SERVER,
+	LDAP_AUTH_CLIENT,
 	PINGING_SERVER,
 	WAITING_CLIENT_DATA,
 	WAITING_SERVER_DATA,
 	PROCESSING_QUERY,
 	CHANGING_SCHEMA,
 	CHANGING_CHARSET,
+	SETTING_CHARSET,
 	CHANGING_AUTOCOMMIT,
 	CHANGING_USER_CLIENT,
 	CHANGING_USER_SERVER,
+	RESETTING_CONNECTION,
 	SETTING_INIT_CONNECT,
+	SETTING_LDAP_USER_VARIABLE,
 	SETTING_SQL_LOG_BIN,
 	SETTING_SQL_MODE,
 	SETTING_TIME_ZONE,
+	SETTING_ISOLATION_LEVEL,
+	SETTING_TRANSACTION_READ,
+	SETTING_TX_ISOLATION,
+	SETTING_CHARACTER_SET_RESULTS,
+	SETTING_SESSION_TRACK_GTIDS,
+	SETTING_SQL_AUTO_IS_NULL,
+	SETTING_SQL_SELECT_LIMIT,
+	SETTING_SQL_SAFE_UPDATES,
+	SETTING_COLLATION_CONNECTION,
+	SETTING_NET_WRITE_TIMEOUT,
+	SETTING_MAX_JOIN_SIZE,
+	SETTING_MULTI_STMT,
 	FAST_FORWARD,
 	PROCESSING_STMT_PREPARE,
 	PROCESSING_STMT_EXECUTE,
@@ -295,6 +342,13 @@ enum MYSQL_COM_QUERY_command {
 	MYSQL_COM_QUERY___NONE // Special marker.
 };
 
+enum handle_unknown_charset {
+	HANDLE_UNKNOWN_CHARSET__DISCONNECT_CLIENT,
+	HANDLE_UNKNOWN_CHARSET__REPLACE_WITH_DEFAULT_VERBOSE,
+	HANDLE_UNKNOWN_CHARSET__REPLACE_WITH_DEFAULT,
+	HANDLE_UNKNOWN_CHARSET__MAX_HANDLE_VALUE
+};
+
 #endif /* PROXYSQL_ENUMS */
 
 
@@ -347,6 +401,15 @@ class SQLite3_result;
 class stmt_execute_metadata_t;
 class MySQL_STMTs_meta;
 class MySQL_HostGroups_Manager;
+class ProxySQL_HTTP_Server;
+class MySQL_STMTs_local_v14;
+class MySQL_STMT_Global_info;
+class StmtLongDataHandler;
+class ProxySQL_Cluster;
+class MySQL_ResultSet;
+class Query_Processor_Output;
+class MySrvC;
+class Web_Interface_plugin;
 #endif /* PROXYSQL_CLASSES */
 //#endif /* __cplusplus */
 
@@ -466,6 +529,7 @@ struct _global_variables_t {
 
 	bool has_debug;
 	bool idle_threads;
+	bool version_check;
 
 	volatile int shutdown;
 	bool nostart;
@@ -473,7 +537,7 @@ struct _global_variables_t {
 
 	unsigned char protocol_version;
 	char *mysql_server_version;
-	uint16_t server_capabilities;
+	uint32_t server_capabilities;
 	uint8_t server_language;
 	uint16_t server_status;
 
@@ -482,7 +546,6 @@ struct _global_variables_t {
 
 	int merge_configfile_db;
 
-	int core_dump_file_size;
 	int stack_size;
 	char *proxy_admin_socket;
 	char *proxy_mysql_bind;
@@ -586,10 +649,28 @@ ProxySQL_GlobalVariables GloVars;
 MySQL_HostGroups_Manager *MyHGM;
 __thread char *mysql_thread___default_schema;
 __thread char *mysql_thread___server_version;
+__thread char *mysql_thread___keep_multiplexing_variables;
 __thread char *mysql_thread___init_connect;
+__thread char *mysql_thread___ldap_user_variable;
 __thread char *mysql_thread___default_sql_mode;
 __thread char *mysql_thread___default_time_zone;
+__thread char *mysql_thread___default_isolation_level;
+__thread char *mysql_thread___default_transaction_read;
+__thread char *mysql_thread___default_tx_isolation;
+__thread char *mysql_thread___default_character_set_results;
+__thread char *mysql_thread___default_session_track_gtids;
+__thread char *mysql_thread___default_sql_auto_is_null;
+__thread char *mysql_thread___default_sql_select_limit;
+__thread char *mysql_thread___default_sql_safe_updates;
+__thread char *mysql_thread___default_collation_connection;
+__thread char *mysql_thread___default_net_write_timeout;
+__thread char *mysql_thread___default_max_join_size;
+__thread char *mysql_thread___firewall_whitelist_errormsg;
 __thread int mysql_thread___max_allowed_packet;
+__thread bool mysql_thread___automatic_detect_sqli;
+__thread bool mysql_thread___firewall_whitelist_enabled;
+__thread bool mysql_thread___use_tcp_keepalive;
+__thread int mysql_thread___tcp_keepalive_time;
 __thread int mysql_thread___throttle_connections_per_sec_to_hostgroup;
 __thread int mysql_thread___max_transaction_time;
 __thread int mysql_thread___threshold_query_length;
@@ -621,13 +702,20 @@ __thread int mysql_thread___connect_timeout_server;
 __thread int mysql_thread___connect_timeout_server_max;
 __thread int mysql_thread___query_processor_iterations;
 __thread int mysql_thread___query_processor_regex;
-__thread uint16_t mysql_thread___server_capabilities;
-__thread uint8_t mysql_thread___default_charset;
+__thread int mysql_thread___set_query_lock_on_hostgroup;
+__thread int mysql_thread___reset_connection_algorithm;
+__thread uint32_t mysql_thread___server_capabilities;
+__thread int mysql_thread___auto_increment_delay_multiplex;
+__thread unsigned int mysql_thread___default_charset;
+__thread unsigned int mysql_thread___handle_unknown_charset;
 __thread int mysql_thread___poll_timeout;
 __thread int mysql_thread___poll_timeout_on_failure;
+__thread bool mysql_thread___connection_warming;
 __thread bool mysql_thread___have_compress;
+__thread bool mysql_thread___have_ssl;
 __thread bool mysql_thread___client_found_rows;
 __thread bool mysql_thread___multiplexing;
+__thread bool mysql_thread___log_unhealthy_connections;
 __thread bool mysql_thread___forward_autocommit;
 __thread bool mysql_thread___enforce_autocommit_on_reads;
 __thread bool mysql_thread___autocommit_false_not_reusable;
@@ -637,14 +725,20 @@ __thread bool mysql_thread___servers_stats;
 __thread bool mysql_thread___commands_stats;
 __thread bool mysql_thread___query_digests;
 __thread bool mysql_thread___query_digests_lowercase;
+__thread bool mysql_thread___query_digests_replace_null;
+__thread bool mysql_thread___query_digests_no_digits;
+__thread bool mysql_thread___query_digests_normalize_digest_text;
+__thread bool mysql_thread___query_digests_track_hostname;
 __thread int mysql_thread___query_digests_max_digest_length;
 __thread int mysql_thread___query_digests_max_query_length;
+__thread int mysql_thread___show_processlist_extended;
+__thread int mysql_thread___session_idle_ms;
+__thread int mysql_thread___hostgroup_manager_verbose;
 __thread bool mysql_thread___default_reconnect;
 __thread bool mysql_thread___session_idle_show_processlist;
 __thread bool mysql_thread___sessions_sort;
-__thread bool mysql_thread___session_idle_ms;
 __thread bool mysql_thread___kill_backend_connection_when_disconnect;
-__thread int mysql_thread___hostgroup_manager_verbose;
+__thread bool mysql_thread___client_session_track_gtid;
 
 /* variables used for Query Cache */
 __thread int mysql_thread___query_cache_size_MB;
@@ -658,6 +752,12 @@ __thread char * mysql_thread___ssl_p2s_cipher;
 /* variables used by events log */
 __thread char * mysql_thread___eventslog_filename;
 __thread int mysql_thread___eventslog_filesize;
+__thread int mysql_thread___eventslog_default_log;
+__thread int mysql_thread___eventslog_format;
+
+/* variables used by audit log */
+__thread char * mysql_thread___auditlog_filename;
+__thread int mysql_thread___auditlog_filesize;
 
 /* variables used by the monitoring module */
 __thread int mysql_thread___monitor_enabled;
@@ -676,12 +776,22 @@ __thread int mysql_thread___monitor_replication_lag_interval;
 __thread int mysql_thread___monitor_replication_lag_timeout;
 __thread int mysql_thread___monitor_groupreplication_healthcheck_interval;
 __thread int mysql_thread___monitor_groupreplication_healthcheck_timeout;
+__thread int mysql_thread___monitor_groupreplication_healthcheck_max_timeout_count;
+__thread int mysql_thread___monitor_groupreplication_max_transactions_behind_count;
+__thread int mysql_thread___monitor_galera_healthcheck_interval;
+__thread int mysql_thread___monitor_galera_healthcheck_timeout;
+__thread int mysql_thread___monitor_galera_healthcheck_max_timeout_count;
 __thread int mysql_thread___monitor_query_interval;
 __thread int mysql_thread___monitor_query_timeout;
 __thread int mysql_thread___monitor_slave_lag_when_null;
+__thread int mysql_thread___monitor_threads_min;
+__thread int mysql_thread___monitor_threads_max;
+__thread int mysql_thread___monitor_threads_queue_maxsize;
 __thread char * mysql_thread___monitor_username;
 __thread char * mysql_thread___monitor_password;
 __thread char * mysql_thread___monitor_replication_lag_use_percona_heartbeat;
+
+__thread char * mysql_thread___add_ldap_user_comment;
 
 #ifdef DEBUG
 __thread bool mysql_thread___session_debug;
@@ -695,10 +805,28 @@ extern ProxySQL_GlobalVariables GloVars;
 extern MySQL_HostGroups_Manager *MyHGM;
 extern __thread char *mysql_thread___default_schema;
 extern __thread char *mysql_thread___server_version;
+extern __thread char *mysql_thread___keep_multiplexing_variables;
 extern __thread char *mysql_thread___init_connect;
+extern __thread char *mysql_thread___ldap_user_variable;
 extern __thread char *mysql_thread___default_sql_mode;
 extern __thread char *mysql_thread___default_time_zone;
+extern __thread char *mysql_thread___default_isolation_level;
+extern __thread char *mysql_thread___default_transaction_read;
+extern __thread char *mysql_thread___default_tx_isolation;
+extern __thread char *mysql_thread___default_character_set_results;
+extern __thread char *mysql_thread___default_session_track_gtids;
+extern __thread char *mysql_thread___default_sql_auto_is_null;
+extern __thread char *mysql_thread___default_sql_select_limit;
+extern __thread char *mysql_thread___default_sql_safe_updates;
+extern __thread char *mysql_thread___default_collation_connection;
+extern __thread char *mysql_thread___default_net_write_timeout;
+extern __thread char *mysql_thread___default_max_join_size;
+extern __thread char *mysql_thread___firewall_whitelist_errormsg;
 extern __thread int mysql_thread___max_allowed_packet;
+extern __thread bool mysql_thread___automatic_detect_sqli;
+extern __thread bool mysql_thread___firewall_whitelist_enabled;
+extern __thread bool mysql_thread___use_tcp_keepalive;
+extern __thread int mysql_thread___tcp_keepalive_time;
 extern __thread int mysql_thread___throttle_connections_per_sec_to_hostgroup;
 extern __thread int mysql_thread___max_transaction_time;
 extern __thread int mysql_thread___threshold_query_length;
@@ -730,13 +858,20 @@ extern __thread int mysql_thread___connect_timeout_server;
 extern __thread int mysql_thread___connect_timeout_server_max;
 extern __thread int mysql_thread___query_processor_iterations;
 extern __thread int mysql_thread___query_processor_regex;
-extern __thread uint16_t mysql_thread___server_capabilities;
-extern __thread uint8_t mysql_thread___default_charset;
+extern __thread int mysql_thread___set_query_lock_on_hostgroup;
+extern __thread int mysql_thread___reset_connection_algorithm;
+extern __thread uint32_t mysql_thread___server_capabilities;
+extern __thread int mysql_thread___auto_increment_delay_multiplex;
+extern __thread unsigned int  mysql_thread___default_charset;
+extern __thread unsigned int mysql_thread___handle_unknown_charset;
 extern __thread int mysql_thread___poll_timeout;
 extern __thread int mysql_thread___poll_timeout_on_failure;
+extern __thread bool mysql_thread___connection_warming;
 extern __thread bool mysql_thread___have_compress;
+extern __thread bool mysql_thread___have_ssl;
 extern __thread bool mysql_thread___client_found_rows;
 extern __thread bool mysql_thread___multiplexing;
+extern __thread bool mysql_thread___log_unhealthy_connections;
 extern __thread bool mysql_thread___forward_autocommit;
 extern __thread bool mysql_thread___enforce_autocommit_on_reads;
 extern __thread bool mysql_thread___autocommit_false_not_reusable;
@@ -746,14 +881,20 @@ extern __thread bool mysql_thread___servers_stats;
 extern __thread bool mysql_thread___commands_stats;
 extern __thread bool mysql_thread___query_digests;
 extern __thread bool mysql_thread___query_digests_lowercase;
+extern __thread bool mysql_thread___query_digests_no_digits;
+extern __thread bool mysql_thread___query_digests_replace_null;
+extern __thread bool mysql_thread___query_digests_normalize_digest_text;
+extern __thread bool mysql_thread___query_digests_track_hostname;
 extern __thread int mysql_thread___query_digests_max_digest_length;
 extern __thread int mysql_thread___query_digests_max_query_length;
+extern __thread int mysql_thread___show_processlist_extended;
+extern __thread int mysql_thread___session_idle_ms;
+extern __thread int mysql_thread___hostgroup_manager_verbose;
 extern __thread bool mysql_thread___default_reconnect;
 extern __thread bool mysql_thread___session_idle_show_processlist;
 extern __thread bool mysql_thread___sessions_sort;
-extern __thread bool mysql_thread___session_idle_ms;
 extern __thread bool mysql_thread___kill_backend_connection_when_disconnect;
-extern __thread int mysql_thread___hostgroup_manager_verbose;
+extern __thread bool mysql_thread___client_session_track_gtid;
 
 /* variables used for Query Cache */
 extern __thread int mysql_thread___query_cache_size_MB;
@@ -767,6 +908,12 @@ extern __thread char * mysql_thread___ssl_p2s_cipher;
 /* variables used by events log */
 extern __thread char * mysql_thread___eventslog_filename;
 extern __thread int mysql_thread___eventslog_filesize;
+extern __thread int mysql_thread___eventslog_default_log;
+extern __thread int mysql_thread___eventslog_format;
+
+/* variables used by audit log */
+extern __thread char * mysql_thread___auditlog_filename;
+extern __thread int mysql_thread___auditlog_filesize;
 
 /* variables used by the monitoring module */
 extern __thread int mysql_thread___monitor_enabled;
@@ -785,18 +932,25 @@ extern __thread int mysql_thread___monitor_replication_lag_interval;
 extern __thread int mysql_thread___monitor_replication_lag_timeout;
 extern __thread int mysql_thread___monitor_groupreplication_healthcheck_interval;
 extern __thread int mysql_thread___monitor_groupreplication_healthcheck_timeout;
+extern __thread int mysql_thread___monitor_groupreplication_healthcheck_max_timeout_count;
+extern __thread int mysql_thread___monitor_groupreplication_max_transactions_behind_count;
+extern __thread int mysql_thread___monitor_galera_healthcheck_interval;
+extern __thread int mysql_thread___monitor_galera_healthcheck_timeout;
+extern __thread int mysql_thread___monitor_galera_healthcheck_max_timeout_count;
 extern __thread int mysql_thread___monitor_query_interval;
 extern __thread int mysql_thread___monitor_query_timeout;
 extern __thread int mysql_thread___monitor_slave_lag_when_null;
+extern __thread int mysql_thread___monitor_threads_min;
+extern __thread int mysql_thread___monitor_threads_max;
+extern __thread int mysql_thread___monitor_threads_queue_maxsize;
 extern __thread char * mysql_thread___monitor_username;
 extern __thread char * mysql_thread___monitor_password;
 extern __thread char * mysql_thread___monitor_replication_lag_use_percona_heartbeat;
+
+extern __thread char * mysql_thread___add_ldap_user_comment;
 
 #ifdef DEBUG
 extern __thread bool mysql_thread___session_debug;
 #endif /* DEBUG */
 extern __thread unsigned int g_seed;
 #endif /* PROXYSQL_EXTERN */
-
-
-

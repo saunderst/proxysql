@@ -19,17 +19,20 @@
 
 #define MYSQL_DEFAULT_SQL_MODE	""
 #define MYSQL_DEFAULT_TIME_ZONE	"SYSTEM"
-
-#define PROXYSQL_MYSQL_PTHREAD_MUTEX
-
-static unsigned int near_pow_2 (unsigned int n) {
-  unsigned int i = 1;
-  while (i < n) i <<= 1;
-  return i ? i : n;
-}
+#define MYSQL_DEFAULT_ISOLATION_LEVEL	"READ COMMITTED"
+#define MYSQL_DEFAULT_TRANSACTION_READ	"WRITE"
+#define MYSQL_DEFAULT_TX_ISOLATION	"READ-COMMITTED"
+#define MYSQL_DEFAULT_CHARACTER_SET_RESULTS	"NULL"
+#define MYSQL_DEFAULT_SESSION_TRACK_GTIDS	"OFF"
+#define MYSQL_DEFAULT_SQL_AUTO_IS_NULL	"OFF"
+#define MYSQL_DEFAULT_SQL_SELECT_LIMIT	"DEFAULT"
+#define MYSQL_DEFAULT_SQL_SAFE_UPDATES	"OFF"
+#define MYSQL_DEFAULT_COLLATION_CONNECTION	""
+#define MYSQL_DEFAULT_NET_WRITE_TIMEOUT	"60"
+#define MYSQL_DEFAULT_MAX_JOIN_SIZE	"18446744073709551615"
 
 #ifdef IDLE_THREADS
-typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) _conn_exchange_t {
+typedef struct __attribute__((aligned(64))) _conn_exchange_t {
 	pthread_mutex_t mutex_idles;
 	PtrArray *idle_mysql_sessions;
 	pthread_mutex_t mutex_resumes;
@@ -37,120 +40,40 @@ typedef struct __attribute__((aligned(CACHE_LINE_SIZE))) _conn_exchange_t {
 } conn_exchange_t;
 #endif // IDLE_THREADS
 
+typedef struct _thr_id_username_t {
+	uint32_t id;
+	char *username;
+} thr_id_usr;
+
+typedef struct _kill_queue_t {
+	pthread_mutex_t m;
+	std::vector<thr_id_usr *> conn_ids;
+	std::vector<thr_id_usr *> query_ids;
+} kill_queue_t;
+
 class ProxySQL_Poll {
+	private:
+	void shrink();
+	void expand(unsigned int more);
 
-  private:
-  void shrink() {
-    unsigned int new_size=near_pow_2(len+1);
-    fds=(struct pollfd *)realloc(fds,new_size*sizeof(struct pollfd));
-    myds=(MySQL_Data_Stream **)realloc(myds,new_size*sizeof(MySQL_Data_Stream *));
-		last_recv=(unsigned long long *)realloc(last_recv,new_size*sizeof(unsigned long long));
-		last_sent=(unsigned long long *)realloc(last_sent,new_size*sizeof(unsigned long long));
-    size=new_size;
-  };
-  void expand(unsigned int more) {
-    if ( (len+more) > size ) {
-      unsigned int new_size=near_pow_2(len+more);
-      fds=(struct pollfd *)realloc(fds,new_size*sizeof(struct pollfd));
-      myds=(MySQL_Data_Stream **)realloc(myds,new_size*sizeof(MySQL_Data_Stream *));
-			last_recv=(unsigned long long *)realloc(last_recv,new_size*sizeof(unsigned long long));
-			last_sent=(unsigned long long *)realloc(last_sent,new_size*sizeof(unsigned long long));
-      size=new_size;
-    }
-  };
-
-  public:
+	public:
 	unsigned int poll_timeout;
 	unsigned long loops;
 	StatCounters *loop_counters;
-  unsigned int len;
-  unsigned int size;
-  struct pollfd *fds;
-  MySQL_Data_Stream **myds;
+	unsigned int len;
+	unsigned int size;
+	struct pollfd *fds;
+	MySQL_Data_Stream **myds;
 	unsigned long long *last_recv;
 	unsigned long long *last_sent;
 	volatile int pending_listener_add;
 	volatile int pending_listener_del;
 
-  ProxySQL_Poll() {
-#ifdef PROXYSQL_STATSCOUNTERS_NOLOCK
-		loop_counters=new StatCounters(15,10);
-#else
-		loop_counters=new StatCounters(15,10,false);
-#endif
-		poll_timeout=0;
-		loops=0;
-		len=0;
-		pending_listener_add=0;
-		pending_listener_del=0;
-    size=MIN_POLL_LEN;
-    fds=(struct pollfd *)malloc(size*sizeof(struct pollfd));
-    myds=(MySQL_Data_Stream **)malloc(size*sizeof(MySQL_Data_Stream *));
-		last_recv=(unsigned long long *)malloc(size*sizeof(unsigned long long));
-		last_sent=(unsigned long long *)malloc(size*sizeof(unsigned long long));
-  };
-
-  ~ProxySQL_Poll() {
-    unsigned int i;
-    for (i=0;i<len;i++) {
-      if (
-				myds[i] && // fix bug #278 . This should be caused by not initialized datastreams used to ping the backend
-				myds[i]->myds_type==MYDS_LISTENER) {
-        delete myds[i];
-      }
-    }
-    free(myds);
-    free(fds);
-		free(last_recv);
-		free(last_sent);
-		delete loop_counters;
-  };
-
-  void add(uint32_t _events, int _fd, MySQL_Data_Stream *_myds, unsigned long long sent_time) {
-    if (len==size) {
-      expand(1);
-    }
-    myds[len]=_myds;
-    fds[len].fd=_fd;
-    fds[len].events=_events;
-    fds[len].revents=0;
-		if (_myds) {
-			_myds->mypolls=this;
-			_myds->poll_fds_idx=len;  // fix a serious bug
-		}
-    last_recv[len]=monotonic_time();
-    last_sent[len]=sent_time;
-    len++;
-  };
-
-  void remove_index_fast(unsigned int i) {
-		if ((int)i==-1) return;
-		myds[i]->poll_fds_idx=-1; // this prevents further delete
-    if (i != (len-1)) {
-      myds[i]=myds[len-1];
-      fds[i].fd=fds[len-1].fd;
-      fds[i].events=fds[len-1].events;
-      fds[i].revents=fds[len-1].revents;
-			myds[i]->poll_fds_idx=i;  // fix a serious bug
-    	last_recv[i]=last_recv[len-1];
-    	last_sent[i]=last_sent[len-1];
-    }
-    len--;
-    if ( ( len>MIN_POLL_LEN ) && ( size > len*MIN_POLL_DELETE_RATIO ) ) {
-      shrink();
-    }
-  };  
-
-	int find_index(int fd) {
-		unsigned int i;
-		for (i=0; i<len; i++) {
-			if (fds[i].fd==fd) {
-				return i;
-			}
-		}
-		return -1;
-	}
-
+	ProxySQL_Poll();
+	~ProxySQL_Poll();
+	void add(uint32_t _events, int _fd, MySQL_Data_Stream *_myds, unsigned long long sent_time);
+	void remove_index_fast(unsigned int i);
+	int find_index(int fd);
 };
 
 
@@ -200,6 +123,7 @@ class MySQL_Thread
 
 	int pipefd[2];
 	int shutdown;
+	kill_queue_t kq;
 
 	bool epoll_thread;
 	bool poll_timeout_bool;
@@ -216,6 +140,10 @@ class MySQL_Thread
 		unsigned long long frontend_stmt_close;
 		unsigned long long queries;
 		unsigned long long queries_slow;
+		unsigned long long queries_gtid;
+		unsigned long long queries_with_max_lag_ms;
+		unsigned long long queries_with_max_lag_ms__delayed;
+		unsigned long long queries_with_max_lag_ms__total_wait_time_us;
 		unsigned long long queries_backends_bytes_sent;
 		unsigned long long queries_backends_bytes_recv;
 		unsigned long long queries_frontends_bytes_sent;
@@ -228,19 +156,35 @@ class MySQL_Thread
 		unsigned long long ConnPool_get_conn_immediate;
 		unsigned long long ConnPool_get_conn_success;
 		unsigned long long ConnPool_get_conn_failure;
+		unsigned long long ConnPool_get_conn_latency_awareness;
+		unsigned long long gtid_binlog_collected;
+		unsigned long long gtid_session_collected;
+		unsigned long long generated_pkt_err;
+		unsigned long long max_connect_timeout_err;
+		unsigned long long backend_lagging_during_query;
+		unsigned long long backend_offline_during_query;
+		unsigned long long unexpected_com_quit;
+		unsigned long long unexpected_packet;
+		unsigned long long killed_connections;
+		unsigned long long killed_queries;
+		unsigned long long hostgroup_locked;
+		unsigned long long hostgroup_locked_set_cmds;
+		unsigned long long hostgroup_locked_queries;
+		unsigned long long aws_aurora_replicas_skipped_during_query;
+		unsigned long long automatic_detected_sqli;
+		unsigned long long whitelisted_sqli_fingerprint;
 		unsigned int active_transactions;
 	} status_variables;
 
 	struct {
+		int min_num_servers_lantency_awareness;
+		int aurora_max_lag_ms_only_read_from_replicas;
 		bool stats_time_backend_query;
 		bool stats_time_query_processor;
+		bool query_cache_stores_empty_result;
 	} variables;
 
-#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
   pthread_mutex_t thread_mutex;
-#else
-  rwlock_t thread_mutex;
-#endif
   MySQL_Thread();
   ~MySQL_Thread();
   MySQL_Session * create_new_session_and_client_data_stream(int _fd);
@@ -258,9 +202,11 @@ class MySQL_Thread
   void unregister_session_connection_handler(int idx, bool _new=false);
   void listener_handle_new_connection(MySQL_Data_Stream *myds, unsigned int n);
 	void Get_Memory_Stats();
-	MySQL_Connection * get_MyConn_local(unsigned int _hid, MySQL_Session *sess);
+	MySQL_Connection * get_MyConn_local(unsigned int, MySQL_Session *sess, char *gtid_uuid, uint64_t gtid_trxid, int max_lag_ms);
 	void push_MyConn_local(MySQL_Connection *);
 	void return_local_connections();
+	void Scan_Sessions_to_Kill(PtrArray *mysess);
+	void Scan_Sessions_to_Kill_All();
 };
 
 
@@ -306,11 +252,7 @@ class MySQL_Threads_Handler
 	int shutdown_;
 	size_t stacksize;
 	pthread_attr_t attr;
-#ifdef PROXYSQL_MYSQL_PTHREAD_MUTEX
 	pthread_rwlock_t rwlock;
-#else
-	rwlock_t rwlock;
-#endif
 	PtrArray *bind_fds;
 	MySQL_Listeners_Manager *MLM;
 	public:
@@ -331,9 +273,17 @@ class MySQL_Threads_Handler
 		int monitor_replication_lag_timeout;
 		int monitor_groupreplication_healthcheck_interval;
 		int monitor_groupreplication_healthcheck_timeout;
+		int monitor_groupreplication_healthcheck_max_timeout_count;
+		int monitor_groupreplication_max_transactions_behind_count;
+		int monitor_galera_healthcheck_interval;
+		int monitor_galera_healthcheck_timeout;
+		int monitor_galera_healthcheck_max_timeout_count;
 		int monitor_query_interval;
 		int monitor_query_timeout;
 		int monitor_slave_lag_when_null;
+		int monitor_threads_min;
+		int monitor_threads_max;
+		int monitor_threads_queue_maxsize;
 		char *monitor_username;
 		char *monitor_password;
 		char * monitor_replication_lag_use_percona_heartbeat;
@@ -343,6 +293,7 @@ class MySQL_Threads_Handler
 		int shun_recovery_time_sec;
 		int query_retries_on_failure;
 		bool client_multi_statements;
+		bool connection_warming;
 		int connect_retries_on_failure;
 		int connect_retries_delay;
 		int connection_delay_multiplex_ms;
@@ -350,6 +301,7 @@ class MySQL_Threads_Handler
 		int connect_timeout_server;
 		int connect_timeout_server_max;
 		int free_connections_pct;
+		int show_processlist_extended;
 #ifdef IDLE_THREADS
 		int session_idle_ms;
 		bool session_idle_show_processlist;
@@ -358,22 +310,34 @@ class MySQL_Threads_Handler
 		char *default_schema;
 		char *interfaces;
 		char *server_version;
-		uint8_t default_charset;
+		char *keep_multiplexing_variables;
+		unsigned int default_charset;
+		unsigned int handle_unknown_charset;
 		bool servers_stats;
 		bool commands_stats;
 		bool query_digests;
 		bool query_digests_lowercase;
+		bool query_digests_replace_null;
+		bool query_digests_no_digits;
+		bool query_digests_normalize_digest_text;
+		bool query_digests_track_hostname;
 		bool default_reconnect;
 		bool have_compress;
+		bool have_ssl;
 		bool client_found_rows;
 		bool multiplexing;
 //		bool stmt_multiplexing;
+		bool log_unhealthy_connections;
 		bool forward_autocommit;
 		bool enforce_autocommit_on_reads;
 		bool autocommit_false_not_reusable;
 		bool autocommit_false_is_transaction;
 		bool verbose_query_error;
 		int max_allowed_packet;
+		bool automatic_detect_sqli;
+		bool firewall_whitelist_enabled;
+		bool use_tcp_keepalive;
+		int tcp_keepalive_time;
 		int throttle_connections_per_sec_to_hostgroup;
 		int max_transaction_time;
 		int threshold_query_length;
@@ -393,29 +357,55 @@ class MySQL_Threads_Handler
 		int default_query_timeout;
 		int query_processor_iterations;
 		int query_processor_regex;
+		int set_query_lock_on_hostgroup;
+		int reset_connection_algorithm;
+		int auto_increment_delay_multiplex;
 		int long_query_time;
 		int hostgroup_manager_verbose;
+		int binlog_reader_connect_retry_msec;
 		char *init_connect;
+		char *ldap_user_variable;
+		char *add_ldap_user_comment;
 		char *default_sql_mode;
 		char *default_time_zone;
+		char *default_isolation_level;
+		char *default_transaction_read;
+		char *default_tx_isolation;
+		char *default_character_set_results;
+		char *default_session_track_gtids;
+		char *default_sql_auto_is_null;
+		char *default_sql_select_limit;
+		char *default_sql_safe_updates;
+		char *default_collation_connection;
+		char *default_net_write_timeout;
+		char *default_max_join_size;
+		char *firewall_whitelist_errormsg;
 #ifdef DEBUG
 		bool session_debug;
 #endif /* DEBUG */
-		uint16_t server_capabilities;
+		uint32_t server_capabilities;
 		int poll_timeout;
 		int poll_timeout_on_failure;
 		int connpoll_reset_queue_length;
 		char *eventslog_filename;
 		int eventslog_filesize;
+		int eventslog_default_log;
+		int eventslog_format;
+		char *auditlog_filename;
+		int auditlog_filesize;
 		// SSL related, proxy to server
 		char * ssl_p2s_ca;
 		char * ssl_p2s_cert;
 		char * ssl_p2s_key;
 		char * ssl_p2s_cipher;
 		int query_cache_size_MB;
+		int min_num_servers_lantency_awareness;
+		int aurora_max_lag_ms_only_read_from_replicas;
 		bool stats_time_backend_query;
 		bool stats_time_query_processor;
+		bool query_cache_stores_empty_result;
 		bool kill_backend_connection_when_disconnect;
+		bool client_session_track_gtid;
 	} variables;
 	struct {
 		unsigned int mirror_sessions_current;
@@ -438,9 +428,9 @@ class MySQL_Threads_Handler
 	~MySQL_Threads_Handler();
 	
 	char *get_variable_string(char *name);
-	uint8_t get_variable_uint8(char *name);
+	unsigned int get_variable_uint(char *name);
 	uint16_t get_variable_uint16(char *name);
-	int get_variable_int(char *name);
+	int get_variable_int(const char *name);
 	void print_version();
 	void init(unsigned int num=0, size_t stack=0);
 	proxysql_mysql_thread_t *create_thread(unsigned int tn, void *(*start_routine) (void *), bool);
@@ -464,6 +454,8 @@ class MySQL_Threads_Handler
 	unsigned long long get_total_frontend_stmt_close();
 	unsigned long long get_total_queries();
 	unsigned long long get_slow_queries();
+	unsigned long long get_gtid_queries();
+	unsigned long long get_gtid_session_collected();
 	unsigned long long get_queries_backends_bytes_recv();
 	unsigned long long get_queries_backends_bytes_sent();
 	unsigned long long get_queries_frontends_bytes_recv();
@@ -480,10 +472,29 @@ class MySQL_Threads_Handler
 	unsigned long long get_ConnPool_get_conn_immediate();
 	unsigned long long get_ConnPool_get_conn_success();
 	unsigned long long get_ConnPool_get_conn_failure();
+	unsigned long long get_ConnPool_get_conn_latency_awareness();
+	unsigned long long get_generated_pkt_err();
+	unsigned long long get_max_connect_timeout();
+	unsigned long long get_unexpected_com_quit();
+	unsigned long long get_unexpected_packet();
+	unsigned long long get_hostgroup_locked();
+	unsigned long long get_hostgroup_locked_set_cmds();
+	unsigned long long get_hostgroup_locked_queries();
+	unsigned long long get_aws_aurora_replicas_skipped_during_query();
+	unsigned long long get_automatic_detected_sqli();
+	unsigned long long get_whitelisted_sqli_fingerprint();
+	unsigned long long get_backend_lagging_during_query();
+	unsigned long long get_backend_offline_during_query();
+	unsigned long long get_queries_with_max_lag_ms();
+	unsigned long long get_queries_with_max_lag_ms__delayed();
+	unsigned long long get_queries_with_max_lag_ms__total_wait_time_us();
+	unsigned long long get_killed_connections();
+	unsigned long long get_killed_queries();
 	iface_info *MLM_find_iface_from_fd(int fd) {
 		return MLM->find_iface_from_fd(fd);
 	}
 	void Get_Memory_Stats();
+	void kill_connection_or_query(uint32_t _thread_session_id, bool query, char *username);
 };
 
 

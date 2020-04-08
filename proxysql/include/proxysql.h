@@ -37,6 +37,7 @@
 #include <signal.h>
 #include <errno.h>
 #include <ctype.h>
+#include <openssl/bio.h>
 #include <openssl/sha.h>
 #include <openssl/md5.h>
 #include <openssl/ssl.h>
@@ -50,11 +51,11 @@
 
 #if !defined(__FreeBSD__) && !defined(__APPLE__)
 #define HAVE_BOOL
-#include "my_global.h"
+#include "ma_global.h"
 //#include "my_pthread.h"
 #endif
 #include "mysql.h"
-#include "mysql_com.h"
+#include "mariadb_com.h"
 
 #include "proxysql_mem.h"
 
@@ -104,6 +105,7 @@ int pkt_com_query(unsigned char *, unsigned int);
 enum MySQL_response_type mysql_response(unsigned char *, unsigned int);
 
 void proxy_error_func(const char *, ...);
+void print_backtrace(void);
 
 #ifdef DEBUG
 void init_debug_struct();
