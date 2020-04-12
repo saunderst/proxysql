@@ -2546,15 +2546,15 @@ __exit__query_parser_command_type:
 	return ret;
 }
 
-bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, char *fc) {
-	bool ret=false;
+void Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, char *fc) {
 	tokenizer_t tok;
-	tokenizer( &tok, fc, ";", TOKENIZER_NO_EMPTIES );
 	const char* token;
+
+	tokenizer (&tok, fc, GloVars.query_parser_token_delimiters, TOKENIZER_NO_EMPTIES);
 	for ( token = tokenize( &tok ) ; token ;  token = tokenize( &tok ) ) {
 		char *key=NULL;
 		char *value=NULL;
-    c_split_2(token, "=", &key, &value);
+		c_split_2(token, GloVars.query_parser_key_value_delimiters, &key, &value);
 		remove_spaces(key);
 		remove_spaces(value);
 		if (strlen(key)) {
@@ -2619,6 +2619,20 @@ bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, ch
 				if ((qpo->min_gtid = validated_gtid(value)) == NULL) {
 					proxy_warning("Invalid gtid value=%s\n", value);
 				}
+			} else if (GloVars.unit_of_work_identifiers) {
+				tokenizer_t names;
+				tokenizer (&names, GloVars.unit_of_work_identifiers, ",", TOKENIZER_NO_EMPTIES);
+				const char* unit_of_work_name;
+
+				while ((unit_of_work_name = tokenize (&names))) {
+					if (!strcasecmp (key, unit_of_work_name)) {
+						qpo->server_hash = SpookyHash::Hash32(value, strlen(value), qpo->server_hash) + 1;
+						// We use the current hash as the seed; if multiple IDs are passed, they will
+						// in effect chain together to yield a unique hash for that sequence.
+						// Add 1 because the default value of 0 means undefined.
+						break;
+					}
+				}
 			}
 		}
 
@@ -2627,7 +2641,6 @@ bool Query_Processor::query_parser_first_comment(Query_Processor_Output *qpo, ch
 		free(value);
 	}
 	free_tokenizer( &tok );
-	return ret;
 }
 
 char * Query_Processor::validated_gtid(char *gtid) {
