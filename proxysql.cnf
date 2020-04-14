@@ -11,6 +11,7 @@ admin_variables=
 
 mysql_variables=
 {
+  connection_warming=true
   session_idle_ms=1
   auto_increment_delay_multiplex=0
   threads=8
