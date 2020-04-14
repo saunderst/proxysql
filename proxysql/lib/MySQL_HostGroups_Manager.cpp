@@ -889,7 +889,7 @@ void MySrvC::connect_error(int err_num) {
 			return;
 		}
 		// same time
-		int max_failures = ( mysql_thread___shun_on_failures > mysql_thread___connect_retries_on_failure ? mysql_thread___connect_retries_on_failure : mysql_thread___shun_on_failures) ;
+		int max_failures = mysql_thread___shun_on_failures;
 		if (__sync_add_and_fetch(&connect_ERR_at_time_last_detected_error,1) >= (unsigned int)max_failures) {
 			bool _shu=false;
 			MyHGM->wrlock(); // to prevent race conditions, lock here. See #627
